@@ -1,14 +1,60 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import JSZip from 'jszip';
 import { generateChargerHealthPDF } from '../utils/pdfGenerator';
 import zeonLogo from '../assets/zeon_charging.webp';
+import DashboardView from './DashboardView';
 import { AuthenticationPieChart, UsageReadinessFunnelChart, PowerQualityLineChart } from './report_graphs';
 
 export default function Home() {
+  // Initialize state from localStorage if available
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [showDashboard, setShowDashboard] = useState(false);
+
+  const [allResults, setAllResults] = useState(() => {
+    try {
+      const saved = localStorage.getItem('zeon_allResults');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      console.error("Failed to load results from storage", e);
+      return null;
+    }
+  });
+
+  const [currentFilter, setCurrentFilter] = useState(() => {
+    return localStorage.getItem('zeon_currentFilter') || 'All Files';
+  });
+
+  const [showDashboard, setShowDashboard] = useState(() => {
+    return localStorage.getItem('zeon_showDashboard') === 'true';
+  });
+
+  // Persistence Effects
+  useEffect(() => {
+    if (allResults) {
+      try {
+        localStorage.setItem('zeon_allResults', JSON.stringify(allResults));
+      } catch (e) {
+        console.error("Storage full or error", e);
+      }
+    } else {
+      localStorage.removeItem('zeon_allResults');
+    }
+  }, [allResults]);
+
+  useEffect(() => {
+    localStorage.setItem('zeon_currentFilter', currentFilter);
+  }, [currentFilter]);
+
+  useEffect(() => {
+    localStorage.setItem('zeon_showDashboard', showDashboard);
+  }, [showDashboard]);
+
+  // Derived result based on filter
+  const result = useMemo(() => {
+    if (!allResults) return null;
+    return allResults[currentFilter];
+  }, [allResults, currentFilter]);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -18,7 +64,7 @@ export default function Home() {
       file.type === 'application/zip' ||
       file.type === 'application/x-zip-compressed')) {
       setSelectedFile(file);
-      setResult(null);
+      setAllResults(null);
       // Auto-upload the file
       handleUpload(file);
     } else {
@@ -46,7 +92,7 @@ export default function Home() {
       file.type === 'application/zip' ||
       file.type === 'application/x-zip-compressed')) {
       setSelectedFile(file);
-      setResult(null);
+      setAllResults(null);
       // Auto-upload the file
       handleUpload(file);
     } else {
@@ -54,33 +100,118 @@ export default function Home() {
     }
   };
 
+  const processFileAPI = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch('/api/process-file', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Server error: ${response.status}`);
+    }
+    return await response.json();
+  };
+
+  const aggregateResults = (resultsList) => {
+    if (resultsList.length === 0) return {};
+    if (resultsList.length === 1) return resultsList[0];
+
+    const aggregated = {};
+
+    resultsList.forEach(result => {
+      Object.keys(result).forEach(key => {
+        // Handle Report Summary Objects (report_1, report_2)
+        if (key.startsWith('report_')) {
+          if (!aggregated[key]) aggregated[key] = {};
+
+          Object.entries(result[key]).forEach(([metric, value]) => {
+            if (typeof value === 'number') {
+              aggregated[key][metric] = (aggregated[key][metric] || 0) + value;
+            } else {
+              // Keep the last seen non-number value or string
+              aggregated[key][metric] = value;
+            }
+          });
+        }
+        // Handle Connector Data Arrays (e.g. 115324)
+        else if (Array.isArray(result[key])) {
+          if (!aggregated[key]) aggregated[key] = [];
+          aggregated[key] = [...aggregated[key], ...result[key]];
+        }
+        // Handle other objects (like 'date', 'info') - just take the latest
+        else {
+          aggregated[key] = result[key];
+        }
+      });
+    });
+
+    return aggregated;
+  };
+
   const handleUpload = async (file) => {
     const fileToUpload = file || selectedFile;
     if (!fileToUpload) return;
 
     setUploading(true);
-    setResult(null);
-
-    const formData = new FormData();
-    formData.append('file', fileToUpload);
+    setAllResults(null);
+    setCurrentFilter('All Files');
 
     try {
-      const response = await fetch('/api/process-file', {
-        method: 'POST',
-        body: formData,
-      });
+      const newResults = {};
 
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
+      if (fileToUpload.name.toLowerCase().endsWith('.zip') || fileToUpload.type === 'application/zip' || fileToUpload.type === 'application/x-zip-compressed') {
+        console.log("Processing ZIP file:", fileToUpload.name);
+        const zip = await JSZip.loadAsync(fileToUpload);
+        const promises = [];
+
+        zip.forEach((relativePath, zipEntry) => {
+          console.log("Found entry:", relativePath, "Dir:", zipEntry.dir);
+          const lowerName = zipEntry.name.toLowerCase();
+          const fileName = zipEntry.name.split('/').pop(); // Extract filename only
+
+          // Filter out folders, Mac metadata, and hidden files
+          if (!zipEntry.dir &&
+            !zipEntry.name.includes('__MACOSX') &&
+            !fileName.startsWith('.') &&
+            (lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls'))) {
+
+            console.log("Processing extracted file:", fileName);
+            promises.push(
+              zipEntry.async('blob').then(async (blob) => {
+                const extractedFile = new File([blob], fileName, { type: 'application/octet-stream' });
+                try {
+                  const data = await processFileAPI(extractedFile);
+                  newResults[fileName] = data; // use clean filename
+                } catch (e) {
+                  console.error(`Failed to process ${fileName}`, e);
+                }
+              })
+            );
+          }
+        });
+
+        await Promise.all(promises);
+        console.log("Finished processing ZIP. Results keys:", Object.keys(newResults));
+      } else {
+        // Single file processing
+        const data = await processFileAPI(fileToUpload);
+        newResults[fileToUpload.name] = data;
       }
 
-      const data = await response.json();
+      const keys = Object.keys(newResults);
+      if (keys.length === 0) {
+        throw new Error("No valid files processed.");
+      }
 
-      setResult(data);
+      // Create aggregation
+      newResults['All Files'] = aggregateResults(Object.values(newResults));
+
+      setAllResults(newResults);
     } catch (error) {
       console.error('Upload error:', error);
       alert(`Error: ${error.message}`);
-      setResult(null);
+      setAllResults(null);
       setSelectedFile(null);
     } finally {
       setUploading(false);
@@ -89,7 +220,7 @@ export default function Home() {
 
   const handleRemove = () => {
     setSelectedFile(null);
-    setResult(null);
+    setAllResults(null);
   };
 
   return (
@@ -181,7 +312,7 @@ export default function Home() {
 
         {result && (
           <div className="flex-1 overflow-auto flex flex-col h-full">
-            <div className="flex items-center justify-between px-4 py-2 bg-black sticky top-0 z-20">
+            <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200 sticky top-0 z-20">
               {/* Logo */}
               <img src={zeonLogo} alt="Zeon Charging" className="h-8 w-auto" />
 
@@ -192,8 +323,43 @@ export default function Home() {
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </div>
-                <h3 className="text-base font-bold text-white">Processing Complete!</h3>
+                <h3 className="text-base font-bold text-black">Processing Complete!</h3>
               </div>
+
+              {/* File Filter Dropdown */}
+              {allResults && Object.keys(allResults).length > 1 && (
+                <div className="ml-6 flex items-center gap-2 flex-1">
+                  <label className="text-gray-700 text-sm font-semibold whitespace-nowrap">Filter by OEM:</label>
+                  <select
+                    value={currentFilter}
+                    onChange={(e) => setCurrentFilter(e.target.value)}
+                    className="bg-white text-black border border-gray-300 rounded-lg px-3 py-1 text-sm focus:ring-2 focus:ring-red-600 outline-none max-w-[400px] truncate"
+                  >
+                    <option value="All Files">All Files (Aggregated)</option>
+                    {Object.keys(allResults)
+                      .filter(k => k !== 'All Files')
+                      .sort()
+                      .map(fileName => {
+                        const data = allResults[fileName];
+                        let oemName = 'Unknown';
+                        try {
+                          if (data && data.info) {
+                            let info = data.info;
+                            if (typeof info === 'string') info = JSON.parse(info);
+                            if (Array.isArray(info) && info.length > 0) oemName = info[0]['OEM Name'] || 'Unknown';
+                          }
+                        } catch (e) { }
+
+                        // Display 'OEM Name (Filename)' to ensure uniqueness and clarity
+                        const label = oemName !== 'Unknown' ? `${oemName} (${fileName})` : fileName;
+
+                        return (
+                          <option key={fileName} value={fileName}>{label}</option>
+                        );
+                      })}
+                  </select>
+                </div>
+              )}
 
               {/* Spacer for balance */}
               <div className="h-8 w-auto opacity-0">
@@ -329,7 +495,12 @@ export default function Home() {
 
             <div className="sticky bottom-0 flex gap-2 px-4 py-2 bg-gray-100 border-t-2 border-gray-300 z-10">
               <button
-                onClick={() => generateChargerHealthPDF(result)}
+                onClick={() => {
+                  const dataToPrint = currentFilter === 'All Files' ? allResults : result;
+                  // Pass the filename if it's a single file
+                  const filename = currentFilter === 'All Files' ? 'Combined_Report' : currentFilter;
+                  generateChargerHealthPDF(dataToPrint, filename);
+                }}
                 className="flex-1 bg-red-600 text-white border-none py-3 px-6 rounded-xl text-base font-semibold cursor-pointer transition-all duration-300 hover:bg-red-700 hover:shadow-[0_10px_25px_rgba(220,38,38,0.4)] active:translate-y-0 flex items-center justify-center gap-2 min-w-[200px]"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -354,7 +525,7 @@ export default function Home() {
 
               <button
                 onClick={() => {
-                  setResult(null);
+                  setAllResults(null);
                   setSelectedFile(null);
                 }}
                 className="flex-1 bg-white text-black border-2 border-black py-3 px-6 rounded-xl text-base font-semibold cursor-pointer transition-all duration-300 hover:bg-black hover:text-white hover:shadow-[0_10px_25px_rgba(0,0,0,0.4)] active:translate-y-0 flex items-center justify-center gap-2 min-w-[200px]"
@@ -372,164 +543,13 @@ export default function Home() {
 
       {/* Analytics Dashboard - Full Page */}
       {showDashboard && result && (
-        <div className="fixed inset-0 bg-white z-50 overflow-auto">
-          {/* Dashboard Header */}
-          <div className="bg-white border-b-2 border-gray-200 px-6 py-4 sticky top-0 z-10 shadow-sm">
-            <div className="max-w-7xl mx-auto flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <img src={zeonLogo} alt="Zeon" className="h-12 w-auto" />
-                <h2 className="text-3xl font-bold text-black flex items-center gap-2">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M3 3v18h18" />
-                    <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
-                  </svg>
-                  Analytics Dashboard
-                </h2>
-              </div>
-              <button
-                onClick={() => setShowDashboard(false)}
-                className="flex items-center gap-2 bg-gray-100 hover:bg-red-600 text-gray-700 hover:text-white px-4 py-2 rounded-lg font-semibold transition-all duration-200"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M19 12H5M12 19l-7-7 7-7" />
-                </svg>
-                Back to Results
-              </button>
-            </div>
-          </div>
-
-          {/* Dashboard Content */}
-          <div className="max-w-7xl mx-auto p-8">
-            {/* Section 1: Charger Usage & Readiness - Funnel Charts */}
-            <div className="mb-12">
-              <h2 className="text-3xl font-bold mb-6 text-center text-gray-800 flex items-center justify-center gap-3">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
-                1. Charger Usage & Readiness
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                {/* Combined Charger Funnel */}
-                <div className="bg-white rounded-2xl shadow-xl p-6 border-2 border-red-500 hover:shadow-2xl transition-all duration-300">
-                  <h3 className="text-2xl font-bold mb-4 text-center text-gray-800 border-b-4 border-red-500 pb-3">
-                    Combined Charger
-                  </h3>
-                  <div className="flex justify-center">
-                    <UsageReadinessFunnelChart
-                      preparing={(result.report_1?.['Preparing Sessions'] || 0) + (result.report_2?.['Preparing Sessions'] || 0)}
-                      charging={(result.report_1?.['Charging Sessions'] || 0) + (result.report_2?.['Charging Sessions'] || 0)}
-                      positiveStops={(result.report_1?.['Successful Sessions'] || 0) + (result.report_2?.['Successful Sessions'] || 0)}
-                      width={300}
-                      height={280}
-                    />
-                  </div>
-                </div>
-
-                {/* Connector 1 Funnel */}
-                <div className="bg-white rounded-2xl shadow-xl p-6 border-2 border-blue-500 hover:shadow-2xl transition-all duration-300">
-                  <h3 className="text-2xl font-bold mb-4 text-center text-gray-800 border-b-4 border-blue-500 pb-3">
-                    Connector 1
-                  </h3>
-                  <div className="flex justify-center">
-                    <UsageReadinessFunnelChart
-                      preparing={result.report_1?.['Preparing Sessions'] || 0}
-                      charging={result.report_1?.['Charging Sessions'] || 0}
-                      positiveStops={result.report_1?.['Successful Sessions'] || 0}
-                      width={300}
-                      height={280}
-                    />
-                  </div>
-                </div>
-
-                {/* Connector 2 Funnel */}
-                <div className="bg-white rounded-2xl shadow-xl p-6 border-2 border-green-500 hover:shadow-2xl transition-all duration-300">
-                  <h3 className="text-2xl font-bold mb-4 text-center text-gray-800 border-b-4 border-green-500 pb-3">
-                    Connector 2
-                  </h3>
-                  <div className="flex justify-center">
-                    <UsageReadinessFunnelChart
-                      preparing={result.report_2?.['Preparing Sessions'] || 0}
-                      charging={result.report_2?.['Charging Sessions'] || 0}
-                      positiveStops={result.report_2?.['Successful Sessions'] || 0}
-                      width={300}
-                      height={280}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 2: Authentication Methods - Combined Pie Chart */}
-            <div className="mb-8">
-              <h2 className="text-3xl font-bold mb-6 text-center text-gray-800 flex items-center justify-center gap-3">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 1v6m0 6v6" />
-                  <circle cx="12" cy="12" r="10" />
-                </svg>
-                2. Authentication Methods
-              </h2>
-              <div className="flex justify-center">
-                <div className="bg-white rounded-2xl shadow-xl p-8 border-2 border-gray-300 hover:shadow-2xl transition-all duration-300 max-w-xl">
-                  <h3 className="text-2xl font-bold mb-6 text-center text-gray-800 border-b-4 border-blue-500 pb-3">
-                    Combined Connectors
-                  </h3>
-                  <div className="flex justify-center">
-                    <AuthenticationPieChart
-                      remoteStart={(result.report_1?.['Remote Start'] || 0) + (result.report_2?.['Remote Start'] || 0)}
-                      autoCharge={(result.report_1?.['Auto Start'] || 0) + (result.report_2?.['Auto Start'] || 0)}
-                      rfid={(result.report_1?.['RFID Start'] || 0) + (result.report_2?.['RFID Start'] || 0)}
-                      width={350}
-                      height={350}
-                    />
-                  </div>
-                  <div className="mt-4 text-center">
-                    <p className="text-sm font-semibold text-gray-700">Authentication Method Distribution</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 3: Power & Charging Quality - Line Chart */}
-            <div className="mb-8">
-              <h2 className="text-3xl font-bold mb-6 text-center text-gray-800 flex items-center justify-center gap-3">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-                </svg>
-                3. Power & Charging Quality
-              </h2>
-              <div className="flex justify-center">
-                <div className="bg-white rounded-2xl shadow-xl p-8 border-2 border-gray-300 hover:shadow-2xl transition-all duration-300">
-                  <PowerQualityLineChart
-                    peakPowerData={[
-                      { monthIndex: 0, value: result.report_1?.['Peak Power Delivered (kW)'] || 0 },
-                      { monthIndex: 11, value: result.report_2?.['Peak Power Delivered (kW)'] || 0 }
-                    ]}
-                    avgPowerData={[
-                      { monthIndex: 0, value: result.report_1?.['Avg Power per Session (kW)'] || 0 },
-                      { monthIndex: 11, value: result.report_2?.['Avg Power per Session (kW)'] || 0 }
-                    ]}
-                    width={700}
-                    height={400}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex justify-center gap-4">
-              <button
-                onClick={() => setShowDashboard(false)}
-                className="bg-red-600 text-white px-8 py-3 rounded-xl font-bold text-lg hover:bg-red-700 transition-colors duration-200 shadow-lg hover:shadow-xl flex items-center gap-2"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M19 12H5M12 19l-7-7 7-7" />
-                </svg>
-                Back to Results
-              </button>
-            </div>
-          </div>
-        </div>
+        <DashboardView
+          result={result}
+          onClose={() => setShowDashboard(false)}
+          currentFilter={currentFilter}
+          setCurrentFilter={setCurrentFilter}
+          allResults={allResults}
+        />
       )}
     </div>
   );
