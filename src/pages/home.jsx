@@ -215,7 +215,29 @@ export default function Home() {
                         Object.keys(item).forEach(key => allKeys.add(key));
                       }
                     });
-                    const headers = Array.from(allKeys);
+                    let headers = Array.from(allKeys);
+
+                    // Custom column ordering and filtering
+                    const startKey = headers.find(h => h.toUpperCase() === 'SESSION_START_TIME');
+                    const endKey = headers.find(h => h.toUpperCase() === 'SESSION_END_TIME');
+
+                    // specific columns to remove
+                    const excludedKeys = ['IS_PREPARING'];
+                    headers = headers.filter(h => !excludedKeys.includes(h.toUpperCase()) && h.toUpperCase() !== 'IS_PREPARING');
+
+                    const orderedHeaders = [];
+                    // Add Start Time first
+                    if (startKey && headers.includes(startKey)) {
+                      orderedHeaders.push(startKey);
+                    }
+                    // Add End Time second
+                    if (endKey && headers.includes(endKey)) {
+                      orderedHeaders.push(endKey);
+                    }
+
+                    // Add remaining columns
+                    const remainingHeaders = headers.filter(h => h !== startKey && h !== endKey);
+                    headers = [...orderedHeaders, ...remainingHeaders];
 
                     return (
                       <div key={connectorKey} className="bg-white border border-gray-300 overflow-hidden flex flex-col">
