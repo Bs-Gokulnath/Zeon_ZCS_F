@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
@@ -289,48 +289,271 @@ const processNetworkPerformance = (allResults) => {
 };
 
 
+// Searchable Select Component
+const SearchableSelect = ({ options, value, onChange, label, icon: Icon, prefix }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const containerRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (containerRef.current && !containerRef.current.contains(event.target)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const selectedOption = options.find(o => o.value === value);
+    const displayValue = selectedOption ? selectedOption.label : 'Select...';
+
+    const filteredOptions = options.filter(o =>
+        String(o.label).toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    return (
+        <div className="relative" ref={containerRef}>
+            <button
+                onClick={() => { setIsOpen(!isOpen); setSearchTerm(''); }}
+                className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors w-full min-w-[150px] justify-between"
+            >
+                <div className="flex items-center gap-2 truncate">
+                    {Icon && <Icon className="w-3.5 h-3.5 text-gray-500 flex-none" />}
+                    {prefix && <span className="text-xs font-bold text-gray-400 flex-none">{prefix}</span>}
+                    <span className="text-xs font-semibold text-gray-700 truncate block max-w-[120px] text-left">
+                        {value === 'All' || value === 'All Files' ? (prefix ? 'All' : displayValue) : displayValue}
+                    </span>
+                </div>
+                <div className="opacity-50 text-[10px]">▼</div>
+            </button>
+
+            {isOpen && (
+                <div className="absolute top-full left-0 mt-1 w-[200px] max-h-[300px] bg-white border border-gray-200 shadow-xl rounded-lg z-[100] flex flex-col overflow-hidden">
+                    <div className="p-2 border-b border-gray-100 bg-gray-50">
+                        <input
+                            autoFocus
+                            type="text"
+                            placeholder="Search..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full text-xs p-1.5 border border-gray-200 rounded bg-white outline-none focus:border-blue-500"
+                        />
+                    </div>
+                    <div className="overflow-y-auto flex-1 p-1">
+                        {filteredOptions.length > 0 ? filteredOptions.map(opt => (
+                            <button
+                                key={opt.value}
+                                onClick={() => { onChange(opt.value); setIsOpen(false); }}
+                                className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-blue-50 hover:text-blue-600 truncate transition-colors ${value === opt.value ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-700'}`}
+                                title={opt.label}
+                            >
+                                {opt.label}
+                            </button>
+                        )) : (
+                            <div className="text-xs text-gray-400 p-2 text-center">No results</div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Helper: Get Charge Point ID
+const getChargePointID = (data) => {
+    try {
+        if (data && data.info) {
+            let info = data.info;
+            if (typeof info === 'string') info = JSON.parse(info);
+            if (Array.isArray(info) && info.length > 0) {
+                return info[0]['Charge Point id'] || 'Unknown';
+            }
+        }
+    } catch (e) { }
+    return 'Unknown';
+};
+
+// Helper: Get Station Name
+const getStationName = (data) => {
+    try {
+        if (data && data.info) {
+            let info = data.info;
+            if (typeof info === 'string') info = JSON.parse(info);
+            if (Array.isArray(info) && info.length > 0) {
+                return info[0]['Station Name'] || info[0]['Station Alias Name'] || info[0]['Station Identity'] || 'Unknown';
+            }
+        }
+    } catch (e) { }
+    return 'Unknown';
+};
+
+// Helper: Aggregate Results
+const aggregateData = (resultsList) => {
+    if (!resultsList || resultsList.length === 0) return {};
+    if (resultsList.length === 1) return resultsList[0];
+
+    const combined = {
+        report_1: {},
+        report_2: {},
+        Connector1: [],
+        Connector2: [],
+        info: resultsList[0].info // Keep first file info for basic metadata
+    };
+
+    const sumKeys = ['Preparing Sessions', 'Charging Sessions', 'Successful Sessions', 'Failed / Error Stops', 'Remote Start', 'Auto Start', 'RFID Start'];
+
+    resultsList.forEach(res => {
+        // Report 1
+        sumKeys.forEach(k => {
+            combined.report_1[k] = (combined.report_1[k] || 0) + (res.report_1?.[k] || 0);
+        });
+        // Report 2
+        sumKeys.forEach(k => {
+            combined.report_2[k] = (combined.report_2[k] || 0) + (res.report_2?.[k] || 0);
+        });
+
+        // Merge Arrays
+        if (res.Connector1) combined.Connector1.push(...res.Connector1);
+        if (res.Connector2) combined.Connector2.push(...res.Connector2);
+    });
+
+    return combined;
+};
+
 export default function DashboardView({ result, onClose, currentFilter, setCurrentFilter, allResults }) {
 
     // Data Preparation
     const filters = allResults && Object.keys(allResults).length > 1 ? Object.keys(allResults).sort() : [];
 
-    // ... funnelData ...
+    // State
+    const [selectedCpId, setSelectedCpId] = useState('All');
+    const [selectedStation, setSelectedStation] = useState('All');
+
+    // Grouping Logic
+    const groupedResults = useMemo(() => {
+        if (!allResults) return { byId: {}, byStation: {} };
+        const byId = {};
+        const byStation = {};
+
+        Object.entries(allResults).forEach(([filename, data]) => {
+            if (filename === 'All Files') return;
+
+            // By CPID
+            const cpid = getChargePointID(data);
+            if (!byId[cpid]) byId[cpid] = [];
+            byId[cpid].push(data);
+
+            // By Station
+            const station = getStationName(data);
+            if (!byStation[station]) byStation[station] = [];
+            byStation[station].push(data);
+        });
+        return { byId, byStation };
+    }, [allResults]);
+
+    const cpIds = Object.keys(groupedResults.byId).sort();
+    const stations = Object.keys(groupedResults.byStation).sort();
+
+    // Determine Active Result
+    const activeResult = useMemo(() => {
+        // 1. Specific File (Takes priority if selected)
+        if (currentFilter !== 'All Files') {
+            return allResults[currentFilter] || result;
+        }
+        // 2. CP ID
+        if (selectedCpId !== 'All' && groupedResults.byId[selectedCpId]) {
+            return aggregateData(groupedResults.byId[selectedCpId]);
+        }
+        // 3. Station
+        if (selectedStation !== 'All' && groupedResults.byStation[selectedStation]) {
+            return aggregateData(groupedResults.byStation[selectedStation]);
+        }
+        // 4. Default Globals
+        return result;
+    }, [currentFilter, selectedCpId, selectedStation, groupedResults, result, allResults]);
+
+    // Handlers
+    const handleFileFilterChange = (val) => {
+        setCurrentFilter(val);
+        setSelectedCpId('All');
+        setSelectedStation('All');
+    };
+
+    const handleCpIdChange = (val) => {
+        setSelectedCpId(val);
+        setCurrentFilter('All Files');
+        setSelectedStation('All');
+    };
+
+    const handleStationChange = (val) => {
+        setSelectedStation(val);
+        setSelectedCpId('All');
+        setCurrentFilter('All Files');
+    };
+
+    // Options for Filters
+    const stationOptions = [
+        { value: 'All', label: 'All Stations' },
+        ...stations.map(s => ({ value: s, label: s }))
+    ];
+    const cpidOptions = [
+        { value: 'All', label: 'All CPIDs' },
+        ...cpIds.map(c => ({ value: c, label: c }))
+    ];
+    const fileOptions = [
+        { value: 'All Files', label: 'All Files' },
+        ...filters.map(f => {
+            const data = allResults[f];
+            let oemName = '';
+            try {
+                if (data && data.info) {
+                    let info = data.info;
+                    if (typeof info === 'string') info = JSON.parse(info);
+                    if (Array.isArray(info) && info.length > 0) {
+                        oemName = info[0]['OEM Name'] || info[0]['Station Alias Name'];
+                    }
+                }
+            } catch (e) { }
+            return { value: f, label: oemName ? `${oemName} - ${f}` : f };
+        })
+    ];
 
     const funnelData = {
         combined: {
-            preparing: (result.report_1?.['Preparing Sessions'] || 0) + (result.report_2?.['Preparing Sessions'] || 0),
-            charging: (result.report_1?.['Charging Sessions'] || 0) + (result.report_2?.['Charging Sessions'] || 0),
-            negative: (result.report_1?.['Failed / Error Stops'] || 0) + (result.report_2?.['Failed / Error Stops'] || 0),
-            successful: (result.report_1?.['Successful Sessions'] || 0) + (result.report_2?.['Successful Sessions'] || 0)
+            preparing: (activeResult?.report_1?.['Preparing Sessions'] || 0) + (activeResult?.report_2?.['Preparing Sessions'] || 0),
+            charging: (activeResult?.report_1?.['Charging Sessions'] || 0) + (activeResult?.report_2?.['Charging Sessions'] || 0),
+            negative: (activeResult?.report_1?.['Failed / Error Stops'] || 0) + (activeResult?.report_2?.['Failed / Error Stops'] || 0),
+            successful: (activeResult?.report_1?.['Successful Sessions'] || 0) + (activeResult?.report_2?.['Successful Sessions'] || 0)
         },
         c1: {
-            preparing: result.report_1?.['Preparing Sessions'] || 0,
-            charging: result.report_1?.['Charging Sessions'] || 0,
-            negative: result.report_1?.['Failed / Error Stops'] || 0,
-            successful: result.report_1?.['Successful Sessions'] || 0
+            preparing: activeResult?.report_1?.['Preparing Sessions'] || 0,
+            charging: activeResult?.report_1?.['Charging Sessions'] || 0,
+            negative: activeResult?.report_1?.['Failed / Error Stops'] || 0,
+            successful: activeResult?.report_1?.['Successful Sessions'] || 0
         },
         c2: {
-            preparing: result.report_2?.['Preparing Sessions'] || 0,
-            charging: result.report_2?.['Charging Sessions'] || 0,
-            negative: result.report_2?.['Failed / Error Stops'] || 0,
-            successful: result.report_2?.['Successful Sessions'] || 0
+            preparing: activeResult?.report_2?.['Preparing Sessions'] || 0,
+            charging: activeResult?.report_2?.['Charging Sessions'] || 0,
+            negative: activeResult?.report_2?.['Failed / Error Stops'] || 0,
+            successful: activeResult?.report_2?.['Successful Sessions'] || 0
         }
     };
 
     const pieData = [
-        { name: 'Remote', value: (result.report_1?.['Remote Start'] || 0) + (result.report_2?.['Remote Start'] || 0) },
-        { name: 'Auto', value: (result.report_1?.['Auto Start'] || 0) + (result.report_2?.['Auto Start'] || 0) },
-        { name: 'RFID', value: (result.report_1?.['RFID Start'] || 0) + (result.report_2?.['RFID Start'] || 0) }
+        { name: 'Remote', value: (activeResult?.report_1?.['Remote Start'] || 0) + (activeResult?.report_2?.['Remote Start'] || 0) },
+        { name: 'Auto', value: (activeResult?.report_1?.['Auto Start'] || 0) + (activeResult?.report_2?.['Auto Start'] || 0) },
+        { name: 'RFID', value: (activeResult?.report_1?.['RFID Start'] || 0) + (activeResult?.report_2?.['RFID Start'] || 0) }
     ].filter(d => d.value > 0);
 
     // Error Data
-    const errorData = processErrorBreakdown(result);
+    const errorData = processErrorBreakdown(activeResult);
     const ERROR_COLORS = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6366F1'];
 
     // Dynamic Daily Line Data
-    const lineData = processSessionTrend(result);
+    const lineData = processSessionTrend(activeResult);
 
-    // Network Performance Data
+    // Network Performance Data (Global)
     const networkData = processNetworkPerformance(allResults);
 
     return (
@@ -341,7 +564,6 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
         >
             {/* Header - Fixed Height */}
             <div className="bg-white px-4 py-2 border-b border-gray-200 shadow-sm flex justify-between items-center flex-none h-[60px]">
-                {/* ... Header Content ... */}
                 <div className="flex items-center gap-3">
                     <img src={zeonLogo} alt="Zeon" className="h-8 w-auto" />
                     <div className="h-6 w-[1px] bg-gray-300"></div>
@@ -352,33 +574,34 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
                 </div>
 
                 <div className="flex items-center gap-3">
-                    {filters.length > 0 && (
-                        <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
-                            <Filter className="w-3.5 h-3.5 text-gray-500" />
-                            <select
-                                value={currentFilter}
-                                onChange={(e) => setCurrentFilter(e.target.value)}
-                                className="bg-transparent outline-none text-xs font-semibold text-gray-700 w-[150px]"
-                            >
-                                <option value="All Files">All Files</option>
-                                {filters.filter(f => f !== 'All Files').map(f => {
-                                    const data = allResults[f];
-                                    let oemName = '';
-                                    try {
-                                        if (data && data.info) {
-                                            let info = data.info;
-                                            if (typeof info === 'string') info = JSON.parse(info);
-                                            if (Array.isArray(info) && info.length > 0) {
-                                                oemName = info[0]['OEM Name'] || info[0]['Station Alias Name'];
-                                            }
-                                        }
-                                    } catch (e) { /* ignore */ }
+                    {/* Filter 1: Station Name */}
+                    {stations.length > 1 && (
+                        <SearchableSelect
+                            options={stationOptions}
+                            value={selectedStation}
+                            onChange={handleStationChange}
+                            prefix="Station:"
+                        />
+                    )}
 
-                                    const label = oemName ? `${oemName} - ${f}` : f;
-                                    return <option key={f} value={f}>{label}</option>;
-                                })}
-                            </select>
-                        </div>
+                    {/* Filter 2: CP ID */}
+                    {cpIds.length > 1 && (
+                        <SearchableSelect
+                            options={cpidOptions}
+                            value={selectedCpId}
+                            onChange={handleCpIdChange}
+                            prefix="CPID:"
+                        />
+                    )}
+
+                    {/* Filter 3: File Name */}
+                    {filters.length > 0 && (
+                        <SearchableSelect
+                            options={fileOptions}
+                            value={currentFilter}
+                            onChange={handleFileFilterChange}
+                            icon={Filter}
+                        />
                     )}
 
                     <button
