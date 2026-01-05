@@ -457,38 +457,8 @@ export default function Home() {
                         </div>
                       </div>
                     );
-                  } else if (typeof connectorData === 'object' && connectorData !== null) {
-                    // If it's a single object, display as key-value pairs
-                    return (
-                      <div key={connectorKey} className="bg-white rounded-2xl shadow-lg overflow-hidden border-2 border-indigo-200">
-                        <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4">
-                          <h4 className="text-xl font-bold text-white uppercase tracking-wide">{connectorKey}</h4>
-                        </div>
-                        <div className="p-6">
-                          <table className="w-full">
-                            <tbody className="divide-y divide-gray-200">
-                              {Object.entries(connectorData).map(([key, value]) => (
-                                <tr key={key} className="hover:bg-indigo-50">
-                                  <td className="px-4 py-3 text-sm font-semibold text-gray-700 bg-gray-50 w-1/3">
-                                    {key.replace(/_/g, ' ')}
-                                  </td>
-                                  <td className="px-4 py-3 text-sm text-gray-700">
-                                    {typeof value === 'object' ? (
-                                      <pre className="text-xs bg-gray-100 p-2 rounded overflow-x-auto">
-                                        {JSON.stringify(value, null, 2)}
-                                      </pre>
-                                    ) : (
-                                      <span className="font-medium">{String(value)}</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    );
                   }
+                  return null;
                   return null;
                 })}
             </div>
