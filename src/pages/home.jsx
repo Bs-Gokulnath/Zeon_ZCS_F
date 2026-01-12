@@ -10,6 +10,7 @@ export default function Home() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [selectedMode, setSelectedMode] = useState('CMS'); // Default to CMS
 
   const [allResults, setAllResults] = useState(() => {
     try {
@@ -85,6 +86,7 @@ export default function Home() {
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
+
     const file = e.dataTransfer.files[0];
     if (file && (file.type === 'text/csv' ||
       file.type === 'application/vnd.ms-excel' ||
@@ -100,9 +102,23 @@ export default function Home() {
     }
   };
 
-  const processFileAPI = async (file) => {
+  const processFileAPI = async (file, mode) => {
+    console.log('🔍 Processing file with mode:', mode);
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('data_source', mode.toLowerCase()); // Send 'cms' or 's3' to backend
+
+    // Debug: Log all FormData entries
+    console.log('📤 Sending data_source to backend:', mode.toLowerCase());
+    console.log('📦 FormData contents:');
+    for (let [key, value] of formData.entries()) {
+      if (key === 'file') {
+        console.log(`  ${key}:`, value.name, `(${value.size} bytes)`);
+      } else {
+        console.log(`  ${key}:`, value);
+      }
+    }
+
     const response = await fetch('/api/process-file', {
       method: 'POST',
       body: formData,
@@ -181,7 +197,7 @@ export default function Home() {
               zipEntry.async('blob').then(async (blob) => {
                 const extractedFile = new File([blob], fileName, { type: 'application/octet-stream' });
                 try {
-                  const data = await processFileAPI(extractedFile);
+                  const data = await processFileAPI(extractedFile, selectedMode);
                   newResults[fileName] = data; // use clean filename
                 } catch (e) {
                   console.error(`Failed to process ${fileName}`, e);
@@ -195,7 +211,7 @@ export default function Home() {
         console.log("Finished processing ZIP. Results keys:", Object.keys(newResults));
       } else {
         // Single file processing
-        const data = await processFileAPI(fileToUpload);
+        const data = await processFileAPI(fileToUpload, selectedMode);
         newResults[fileToUpload.name] = data;
       }
 
@@ -227,14 +243,44 @@ export default function Home() {
     <div className="h-screen overflow-hidden">
       <div className={`bg-white w-full h-full flex flex-col ${result ? 'p-0' : 'flex items-center justify-center p-5'}`}>
         {!result && (
-          <div className="max-w-2xl w-full bg-white rounded-2xl p-12 shadow-[0_0_50px_rgba(0,0,0,0.1)] border-2 border-black animate-[slideUp_0.5s_ease-out]">
+          <div className="max-w-2xl w-full bg-white rounded-2xl p-12 shadow-[0_0_50px_rgba(0,0,0,0.1)] border-2 border-black animate-[slideUp_0.5s_ease-out] relative">
+
             {/* Zeon Logo */}
             <div className="flex justify-center mb-6">
               <img src={zeonLogo} alt="Zeon Charging" className="h-16 w-auto" />
             </div>
 
             <h1 className="text-4xl font-bold text-black mb-2 text-center">Charger Health Report</h1>
-            <p className="text-base text-gray-700 text-center mb-8">Upload your Excel, CSV, or ZIP file to generate the report</p>
+            <p className="text-base text-gray-700 text-center mb-4">Upload your Excel, CSV, or ZIP file to generate the report</p>
+
+            {/* Source Selection Switch */}
+            <div className="flex justify-center items-center gap-4 mb-6">
+              <span className={`text-sm font-semibold transition-colors ${selectedMode === 'CMS' ? 'text-orange-600' : 'text-gray-400'}`}>
+                CMS
+              </span>
+              <button
+                onClick={() => {
+                  const newMode = selectedMode === 'CMS' ? 'S3' : 'CMS';
+                  console.log('🔄 Switching mode from', selectedMode, 'to', newMode);
+                  setSelectedMode(newMode);
+                }}
+                className={`relative w-16 h-8 rounded-full transition-all duration-300 ${selectedMode === 'S3' ? 'bg-orange-500' : 'bg-gray-300'
+                  }`}
+              >
+                <div
+                  className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-md transition-transform duration-300 ${selectedMode === 'S3' ? 'translate-x-8' : 'translate-x-0'
+                    }`}
+                />
+              </button>
+              <span className={`text-sm font-semibold transition-colors ${selectedMode === 'S3' ? 'text-orange-600' : 'text-gray-400'}`}>
+                S3
+              </span>
+            </div>
+
+            {/* Mode Selection Indicator */}
+            <p className="text-sm text-center mb-6 text-orange-600 font-semibold">
+              Data Source: {selectedMode}
+            </p>
 
             <div
               className={`border-3 border-dashed rounded-2xl py-12 px-6 text-center transition-all duration-300 cursor-pointer relative ${isDragging
