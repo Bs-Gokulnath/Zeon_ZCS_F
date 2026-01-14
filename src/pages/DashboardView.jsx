@@ -188,25 +188,33 @@ const processSessionTrend = (result) => {
 
     if (rowsWithDate.length === 0) return [];
 
-    // 2. Sort by Date
-    rowsWithDate.sort((a, b) => a.dateObj - b.dateObj);
+    // 3. Aggregate by Day
+    const aggregated = {};
+    rowsWithDate.forEach(({ dateObj, peak, avg }) => {
+        // Create a key for the day: e.g., "Jan 13"
+        const dayKey = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (!aggregated[dayKey]) {
+            aggregated[dayKey] = {
+                label: dayKey,
+                peaks: [],
+                avgs: [],
+                count: 0,
+                sortKey: new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()).getTime()
+            };
+        }
+        aggregated[dayKey].peaks.push(peak);
+        aggregated[dayKey].avgs.push(avg);
+        aggregated[dayKey].count++;
+    });
 
-    // Check Date Range for labeling
-    const firstDate = rowsWithDate[0].dateObj;
-    const lastDate = rowsWithDate[rowsWithDate.length - 1].dateObj;
-    const isSameDay = firstDate.getFullYear() === lastDate.getFullYear() &&
-        firstDate.getMonth() === lastDate.getMonth() &&
-        firstDate.getDate() === lastDate.getDate();
-
-    // 3. Map to Chart Data
-    return rowsWithDate.map(({ dateObj, peak, avg }) => ({
-        label: isSameDay
-            ? dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-            : dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }), // Short date + time
-        sortKey: dateObj.getTime(),
-        peak: parseFloat(peak.toFixed(2)),
-        avg: parseFloat(avg.toFixed(2))
-    }));
+    return Object.values(aggregated)
+        .sort((a, b) => a.sortKey - b.sortKey)
+        .map(day => ({
+            label: day.label,
+            sortKey: day.sortKey,
+            peak: parseFloat((day.peaks.length > 0 ? Math.max(...day.peaks) : 0).toFixed(2)),
+            avg: parseFloat((day.avgs.length > 0 ? day.avgs.reduce((sum, v) => sum + v, 0) / day.count : 0).toFixed(2))
+        }));
 };
 
 // Process Error Breakdown
