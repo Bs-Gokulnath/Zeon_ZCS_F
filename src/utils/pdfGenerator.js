@@ -110,7 +110,6 @@ const renderReportPage = (doc, data, title) => {
   const combinedPrechargingFailure = connector1PrechargingFailure + connector2PrechargingFailure;
   
   // Combine error summaries from new structure
-  const combinedErrors = {};
   const errors1Successful = report1['Successful Error Summary'] || {};
   const errors1Failed = report1['Failed / Error Error Summary'] || {};
   const errors2Successful = report2['Successful Error Summary'] || {};
@@ -196,31 +195,84 @@ const renderReportPage = (doc, data, title) => {
      return { peak: maxPeak, avg: avgPower, totalSessions: rows.length };
   };
 
-  const calculateNegativeStopBreakdown = (rows) => {
-     if (!Array.isArray(rows) || rows.length === 0) return {};
-     const breakdown = {};
-     rows.forEach(row => {
-         const status = getVal(row, 'STOP', 'Stop', 'Status', 'Session Status');
-         if (status && (status.toString().toLowerCase().includes('failed') || status.toString().toLowerCase().includes('error'))) {
-             
-             // Priority list for Reason
-             const reasonKeys = ['STOPREASON', 'Stop Reason', 'StopReason', 'REASON', 'Reason', 'VENDORERRORCODE', 'VendorErrorCode', 'ERRORCODE', 'ErrorCode'];
-             let title = 'Unknown';
-             
-             for (const key of reasonKeys) {
-                 const val = getVal(row, key);
-                 // Check if valid value (not null, not empty, not 0 (from getVal default), and not 'NoError' string)
-                 if (val !== 0 && val !== undefined && val !== null && String(val).trim() !== '' && String(val).toLowerCase() !== 'null' && String(val).toLowerCase() !== 'noerror') {
-                     title = val;
-                     break;
-                 }
-             }
-             
-             title = String(title).trim();
-             breakdown[title] = (breakdown[title] || 0) + 1;
-         }
-     });
-     return breakdown;
+  const getErrorList = (rows) => {
+    if (!Array.isArray(rows) || rows.length === 0) return { general: [], precharging: [] };
+    
+    const general = [];
+    const precharging = [];
+
+    rows.forEach(row => {
+      const status = getVal(row, 'STOP', 'Stop', 'Status', 'Session Status');
+      const vendorCode = getVal(row, 'VendorErrorCode', 'VENDORERRORCODE', 'vendorErrorCode');
+      const isFailed = status && (status.toString().toLowerCase().includes('failed') || status.toString().toLowerCase().includes('error'));
+      const isPrecharge = vendorCode === 'Precharging Failure';
+
+      if (isFailed || isPrecharge || vendorCode || getVal(row, 'reason', 'Reason') || getVal(row, 'info', 'Info')) {
+        // Get Session ID
+        const sessionId = getVal(row, 'Session ID', 'SessionId', 'Transaction Id', 'TransactionId', 'Id') || 'Unknown';
+
+        // Get sorting time
+        const timeVal = getVal(row, 'Session Start Time', 'Start Time', 'Date', 'Started', 'Created', 'Time', 'Timestamp', 'timestamp');
+        let rawTime = 0;
+        let formattedTime = '—';
+        if (timeVal) {
+          try {
+            const d = new Date(timeVal);
+            if (!isNaN(d.getTime())) {
+              rawTime = d.getTime();
+              formattedTime = d.toLocaleString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(',', '');
+            } else {
+              formattedTime = String(timeVal).substring(0, 20);
+            }
+          } catch (e) { formattedTime = String(timeVal); }
+        }
+        
+        // Extract relevant keys for grouping
+        const info = getVal(row, 'info', 'Info');
+        const reason = getVal(row, 'Stop Reason', 'STOPREASON', 'StopReason', 'reason', 'Reason');
+
+        // 1. Try to find the "All Errors JSON" field
+        let errorJson = "";
+        let foundRaw = false;
+
+        for (const key in row) {
+          const val = row[key];
+          if (val && typeof val === 'object') {
+            const str = JSON.stringify(val);
+            if (str.includes('"info"') || str.includes('"timestamp"') || str.includes('"reason"')) {
+              errorJson = JSON.stringify(val, null, 2);
+              foundRaw = true;
+              break;
+            }
+          }
+        }
+
+        if (!foundRaw) {
+          const cleanError = {};
+          if (formattedTime !== '—') cleanError.timestamp = formattedTime;
+          if (info && info !== 0) cleanError.info = String(info);
+          if (vendorCode && vendorCode !== 0) cleanError.vendorErrorCode = String(vendorCode);
+          if (reason && reason !== 0) cleanError.reason = String(reason);
+
+          if (Object.keys(cleanError).length === 0) {
+            cleanError.reason = 'Unknown Error';
+          }
+          errorJson = JSON.stringify(cleanError, null, 2);
+        }
+
+        const errorObj = { sessionId, json: errorJson, rawTime };
+        if (isPrecharge) {
+          precharging.push(errorObj);
+        } else {
+          general.push(errorObj);
+        }
+      }
+    });
+    
+    return {
+      general: general.sort((a, b) => a.rawTime - b.rawTime),
+      precharging: precharging.sort((a, b) => a.rawTime - b.rawTime)
+    };
   };
 
   // Recalculate metrics from raw data
@@ -239,12 +291,8 @@ const renderReportPage = (doc, data, title) => {
   
   let combinedAvgPower = 0;
   if (hasRecalc1 || hasRecalc2) {
-      // Weighted average by... sessions? or just average of averages?
-      // Better: (Total Energy 1 + 2) / (Total Duration 1 + 2) if we had the raw totals.
-      // We can expose totals from helper.
       combinedAvgPower = (metrics1.avg + metrics2.avg) / ((hasRecalc1?1:0) + (hasRecalc2?1:0));
   } else {
-     // Fallback to report values
       const rAvg1 = report1['Avg Power per Session (kW)'] || 0;
       const rAvg2 = report2['Avg Power per Session (kW)'] || 0;
       const s1 = report1['Charging Sessions'] || 0;
@@ -269,98 +317,80 @@ const renderReportPage = (doc, data, title) => {
   const col2X = 105;
   const col3X = 200;
   const colWidth = 90;
-  let yPos = currentY;
+
+  // Track parallel column context
+  const sectionStartPage = doc.internal.getNumberOfPages();
+  const sectionStartY = currentY;
+  const originalAddPage = doc.addPage.bind(doc);
+  let maxPageReached = sectionStartPage;
+
+  // Helper to enter parallel mode for a specific column
+  const enterParallelColumn = () => {
+    let currentPage = sectionStartPage;
+    doc.addPage = function() {
+      currentPage++;
+      if (currentPage <= doc.internal.getNumberOfPages()) {
+        doc.setPage(currentPage);
+      } else {
+        originalAddPage();
+      }
+      if (currentPage > maxPageReached) maxPageReached = currentPage;
+      return this;
+    };
+    doc.setPage(sectionStartPage);
+    return sectionStartY;
+  };
+
+  let yPos = enterParallelColumn();
 
   // ========================================
   // COLUMN 1: COMBINED CHARGER METRICS
   // ========================================
   
-  createSectionHeader('COMBINED CHARGER', col1X, yPos, colWidth);
-  yPos += 5;
+   createSectionHeader('COMBINED CHARGER', col1X, yPos, colWidth);
+   yPos += 5;
+ 
+   // PROMINENT SUCCESS RATE DISPLAY
+   const combinedSuccessRateVal = combinedCharging > 0 ? Math.round((combinedSuccessful / combinedCharging) * 100) : 0;
+   doc.setFillColor(combinedSuccessRateVal > 60 ? 240 : 255, combinedSuccessRateVal > 60 ? 255 : 240, combinedSuccessRateVal > 60 ? 240 : 240);
+   doc.rect(col1X, yPos, colWidth, 8, 'F');
+   doc.setDrawColor(...darkBg);
+   doc.rect(col1X, yPos, colWidth, 8, 'S');
+   
+   doc.setFontSize(8);
+   doc.setFont('helvetica', 'bold');
+   doc.setTextColor(combinedSuccessRateVal > 60 ? 0 : 220, combinedSuccessRateVal > 60 ? 128 : 38, combinedSuccessRateVal > 60 ? 0 : 38);
+   doc.text(`Success Rate: ${combinedSuccessRate}`, col1X + colWidth/2, yPos + 5.5, { align: 'center' });
+   
+   doc.setTextColor(...textColor); // Reset
+   yPos += 10;
+ 
+   // Section 1 - Usage & Readiness (Combined)
+   createSectionHeader('1. Charger Usage & Readiness', col1X, yPos, colWidth);
+   yPos += 5;
+ 
+   autoTable(doc, {
+     startY: yPos,
+     head: [['Metric', 'Count']],
+     body: [
+       ['Preparing', combinedPreparing],
+       ['Precharging Failure', combinedPrechargingFailure],
+       ['Charging', combinedCharging],
+       ['Positive Stops', combinedSuccessful],
+       ['Negative Stops', combinedFailed],
+     ],
+     theme: 'grid',
+     headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
+     bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
+     columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
+     margin: { left: col1X, right: 10 },
+     tableWidth: colWidth,
+   });
+ 
+   yPos = doc.lastAutoTable.finalY + 3;
 
-  // Section 1 - Usage & Readiness (Combined)
-  createSectionHeader('1. Charger Usage & Readiness', col1X, yPos, colWidth);
-  yPos += 5;
-
-  autoTable(doc, {
-    startY: yPos,
-    head: [['Metric', 'Count']],
-    body: [
-      ['Preparing', combinedPreparing],
-      ['Charging', combinedCharging],
-      ['Positive Stops', combinedSuccessful],
-      ['Negative Stops', combinedFailed],
-      ['Precharging Failure', combinedPrechargingFailure],
-    ],
-    theme: 'grid',
-    headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
-    bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
-    columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
-    margin: { left: col1X, right: 10 },
-    tableWidth: colWidth,
-  });
-
-  yPos = doc.lastAutoTable.finalY + 1;
-  doc.setFontSize(5);
-  doc.setFont('helvetica', 'bold');
-
-  // Conditional Coloring for Success Rate
-  // Recalculate val properly if needed, derived from string '82%'
-  // But easier to re-derive numeric:
-  const combinedSuccessRateVal = combinedCharging > 0 ? Math.round((combinedSuccessful / combinedCharging) * 100) : 0;
-  
-  if (combinedSuccessRateVal > 60) {
-      doc.setTextColor(0, 128, 0); // Green
-  } else {
-      doc.setTextColor(220, 38, 38); // Red
-  }
-  doc.text(`Success Rate: ${combinedSuccessRate}`, col1X + 2, yPos + 2);
-  
-  doc.setTextColor(...textColor); // Reset
-  yPos += 4;
-
-  // Section 2 - Error Summary (Combined) - Show separately
-  // Calculate Negative Stop Breakdowns (Combined)
-  const breakdown1 = calculateNegativeStopBreakdown(data.Connector1);
-  const breakdown2 = calculateNegativeStopBreakdown(data.Connector2);
-  
-  const combinedBreakdown = {};
-  [breakdown1, breakdown2].forEach(bd => {
-     Object.entries(bd).forEach(([reason, count]) => {
-         combinedBreakdown[reason] = (combinedBreakdown[reason] || 0) + count;
-     });
-  });
-
-  // Section 2 - Error Summary (Negative Stops)
-  createSectionHeader('2. Error Summary', col1X, yPos, colWidth);
-  yPos += 5;
-
-  if (Object.keys(combinedBreakdown).length > 0) {
-      const errorBody = Object.entries(combinedBreakdown)
-        .sort(([, a], [, b]) => b - a)
-        .map(([reason, count]) => [reason, count]);
-
-      autoTable(doc, {
-        startY: yPos,
-        head: [['Stop Reason', 'Count']],
-        body: errorBody,
-        theme: 'grid',
-        headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
-        bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
-        columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
-        margin: { left: col1X },
-        tableWidth: colWidth,
-      });
-      yPos = doc.lastAutoTable.finalY + 2;
-  } else {
-      doc.setFontSize(5);
-      doc.text('No Failed/Error stops recorded.', col1X + 2, yPos + 2);
-      yPos += 6;
-  }
-
-
-  // Section 3 - Authentication (Combined)
-  createSectionHeader('3. Authentication Method', col1X, yPos, colWidth);
+  // Section 2 - Authentication (Combined)
+  createSectionHeader('2. Authentication Method', col1X, yPos, colWidth);
   yPos += 5;
 
   autoTable(doc, {
@@ -381,15 +411,15 @@ const renderReportPage = (doc, data, title) => {
 
   yPos = doc.lastAutoTable.finalY + 2;
 
-  // Section 4 - Power (Combined)
-  createSectionHeader('4. Power & Charging Quality', col1X, yPos, colWidth);
+  // Section 3 - Power (Combined)
+  createSectionHeader('3. Power & Charging Quality', col1X, yPos, colWidth);
   yPos += 5;
 
   autoTable(doc, {
     startY: yPos,
     head: [['Metric', 'Value']],
     body: [
-      ['Peak Power (kW)', combinedPeakPower.toFixed(2)],
+      ['Peak Power (kW)', (peak1 + peak2) > 0 ? combinedPeakPower.toFixed(2) : '0.00'],
       ['Avg Power (kW)', combinedAvgPower.toFixed(2)],
     ],
     theme: 'grid',
@@ -411,6 +441,8 @@ const renderReportPage = (doc, data, title) => {
     }
   });
 
+  // Sections 4 & 5 (Error logs) moved to Page 2 for connectors
+
   // ========================================
   // COLUMNS 2 & 3: INDIVIDUAL CONNECTORS
   // ========================================
@@ -423,7 +455,7 @@ const renderReportPage = (doc, data, title) => {
   reports.forEach((report) => {
     if (!report.data) return;
 
-    let connectorY = currentY;
+    let connectorY = enterParallelColumn();
 
     // Connector header
     createSectionHeader(report.name, report.colX, connectorY, colWidth);
@@ -434,6 +466,20 @@ const renderReportPage = (doc, data, title) => {
     const total = report.data['Charging Sessions'] || 0;
     const successRateVal = total > 0 ? Math.round((successful / total) * 100) : 0;
     const successRate = total > 0 ? `${successRateVal}% (${successful} / ${total})` : '0%';
+
+    // PROMINENT SUCCESS RATE DISPLAY (INDIVIDUAL)
+    doc.setFillColor(successRateVal > 60 ? 240 : 255, successRateVal > 60 ? 255 : 240, successRateVal > 60 ? 240 : 240);
+    doc.rect(report.colX, connectorY, colWidth, 8, 'F');
+    doc.setDrawColor(...darkBg);
+    doc.rect(report.colX, connectorY, colWidth, 8, 'S');
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(successRateVal > 60 ? 0 : 220, successRateVal > 60 ? 128 : 38, successRateVal > 60 ? 0 : 38);
+    doc.text(`Success Rate: ${successRate}`, report.colX + colWidth/2, connectorY + 5.5, { align: 'center' });
+
+    doc.setTextColor(...textColor); // Reset
+    connectorY += 10;
 
     // Count precharging failures from raw connector data
     const connectorKey = report.key === 'report_1' ? 'Connector1' : 'Connector2';
@@ -448,10 +494,10 @@ const renderReportPage = (doc, data, title) => {
       head: [['Metric', 'Count']],
       body: [
         ['Preparing', report.data['Preparing Sessions'] || 0],
+        ['Precharging Failure', prechargingFailure],
         ['Charging', report.data['Charging Sessions'] || 0],
         ['Positive Stops', report.data['Successful Sessions'] || 0],
         ['Negative Stops', report.data['Failed / Error Stops'] || 0],
-        ['Precharging Failure', prechargingFailure],
       ],
       theme: 'grid',
       headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
@@ -461,53 +507,10 @@ const renderReportPage = (doc, data, title) => {
       tableWidth: colWidth,
     });
 
-    connectorY = doc.lastAutoTable.finalY + 1;
-    doc.setFontSize(5);
-    doc.setFont('helvetica', 'bold');
-    
-    // Conditional Coloring for Individual Connector Success Rate
-    if (successRateVal > 60) {
-        doc.setTextColor(0, 128, 0); // Green
-    } else {
-        doc.setTextColor(220, 38, 38); // Red
-    }
-    doc.text(`Success Rate: ${successRate}`, report.colX + 2, connectorY + 2);
-    
-    doc.setTextColor(...textColor); // Reset
-    connectorY += 4;
+    connectorY = doc.lastAutoTable.finalY + 3;
 
-    // Section 2 - Error Summary - Show separately
-    // Section 2 - Error Summary
-    const breakdown = calculateNegativeStopBreakdown(data[connectorKey]);
-
-    createSectionHeader('2. Error Summary', report.colX, connectorY, colWidth);
-    connectorY += 5;
-
-    if (Object.keys(breakdown).length > 0) {
-      const errorBody = Object.entries(breakdown)
-        .sort(([, a], [, b]) => b - a)
-        .map(([reason, count]) => [reason, count]);
-
-      autoTable(doc, {
-        startY: connectorY,
-        head: [['Stop Reason', 'Count']],
-        body: errorBody,
-        theme: 'grid',
-        headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
-        bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
-        columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
-        margin: { left: report.colX },
-        tableWidth: colWidth,
-      });
-      connectorY = doc.lastAutoTable.finalY + 2;
-    } else {
-       doc.setFontSize(5);
-       doc.text('No Failed/Error stops recorded.', report.colX + 2, connectorY + 2);
-       connectorY += 6;
-    }
-
-    // Section 3 - Authentication
-    createSectionHeader('3. Authentication Method', report.colX, connectorY, colWidth);
+    // Section 2 - Authentication
+    createSectionHeader('2. Authentication Method', report.colX, connectorY, colWidth);
     connectorY += 5;
 
     const remoteStart = report.data['Remote Start'] || 0;
@@ -530,10 +533,10 @@ const renderReportPage = (doc, data, title) => {
       tableWidth: colWidth,
     });
 
-    connectorY = doc.lastAutoTable.finalY + 2;
+    connectorY = doc.lastAutoTable.finalY + 3;
 
-    // Section 4 - Power
-    createSectionHeader('4. Power & Charging Quality', report.colX, connectorY, colWidth);
+    // Section 3 - Power
+    createSectionHeader('3. Power & Charging Quality', report.colX, connectorY, colWidth);
     connectorY += 5;
 
     const peakPowerRaw = report.metrics.peak > 0 ? report.metrics.peak : report.data['Peak Power Delivered (kW)'];
@@ -558,11 +561,8 @@ const renderReportPage = (doc, data, title) => {
       tableWidth: colWidth,
       didParseCell: (data) => {
         if (data.section === 'body' && data.row.index === 0 && data.column.index === 1) {
-             // Use 90% of (Station Capacity / 2) as threshold for single connector
-             // OR keep it simple: if peak > 0.9 * (StationCapacity/2)
              const threshold = (stationCapacity / 2) * 0.9;
              const pVal = parseFloat(peakPower);
-
              if (stationCapacity > 0 && !isNaN(pVal)) {
                  if (pVal > threshold) {
                     data.cell.styles.textColor = [0, 128, 0];
@@ -574,7 +574,96 @@ const renderReportPage = (doc, data, title) => {
         }
     }
     });
+
+    // Sections 4 & 5 (Error Logs) moved to Page 2
   });
+
+  // ========================================
+  // PAGE 2: DETAILED ERROR LOGS
+  // ========================================
+  originalAddPage();
+  const errorPageStart = doc.internal.getNumberOfPages();
+  maxPageReached = errorPageStart;
+  const page2Y = 15; // Starting Y for page 2
+
+  // Update parallel column helper to start from Page 2
+  const enterParallelColumnP2 = () => {
+    let currentPage = errorPageStart;
+    doc.addPage = function() {
+      currentPage++;
+      if (currentPage <= doc.internal.getNumberOfPages()) {
+        doc.setPage(currentPage);
+      } else {
+        originalAddPage();
+      }
+      if (currentPage > maxPageReached) maxPageReached = currentPage;
+      return this;
+    };
+    doc.setPage(errorPageStart);
+    return page2Y;
+  };
+
+  reports.forEach((report) => {
+    if (!report.data) return;
+    
+    let connectorY = enterParallelColumnP2();
+    const connectorKey = report.key === 'report_1' ? 'Connector1' : 'Connector2';
+    const errors = getErrorList(data[connectorKey]);
+
+    // Header repeated for context
+    createSectionHeader(report.name + ' - DETAILS', report.colX, connectorY, colWidth);
+    connectorY += 10;
+
+    // Section 4 - Precharging Description
+    createSectionHeader('4. Precharging Description', report.colX, connectorY, colWidth);
+    connectorY += 5;
+
+    if (errors.precharging.length > 0) {
+      const preBody = errors.precharging.map(e => [e.json, e.sessionId, "1"]);
+      autoTable(doc, {
+        startY: connectorY,
+        head: [['Error Details', 'Transaction IDs', 'Count']],
+        body: preBody,
+        theme: 'grid',
+        headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
+        bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
+        columnStyles: { 0: { cellWidth: 45 }, 1: { cellWidth: 35 }, 2: { cellWidth: 10, halign: 'center' } },
+        margin: { left: report.colX },
+        tableWidth: colWidth,
+      });
+      connectorY = doc.lastAutoTable.finalY + 3;
+    } else {
+       doc.setFontSize(5);
+       doc.text('No precharging failures recorded.', report.colX + 2, connectorY + 2);
+       connectorY += 6;
+    }
+
+    // Section 5 - Error Description
+    createSectionHeader('5. Error Description', report.colX, connectorY, colWidth);
+    connectorY += 5;
+
+    if (errors.general.length > 0) {
+      const errorBody = errors.general.map(e => [e.json, e.sessionId, "1"]);
+      autoTable(doc, {
+        startY: connectorY,
+        head: [['Error Details', 'Transaction IDs', 'Count']],
+        body: errorBody,
+        theme: 'grid',
+        headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
+        bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
+        columnStyles: { 0: { cellWidth: 45 }, 1: { cellWidth: 35 }, 2: { cellWidth: 10, halign: 'center' } },
+        margin: { left: report.colX },
+        tableWidth: colWidth,
+      });
+    } else {
+       doc.setFontSize(5);
+       doc.text('No other Failed/Error stops recorded.', report.colX + 2, connectorY + 2);
+    }
+  });
+
+  // Restore original addPage and jump to the furthest page reached
+  doc.addPage = originalAddPage;
+  doc.setPage(maxPageReached);
 };
 
 export const generateChargerHealthPDF = (data, filename = "Charger_Health_Report") => {

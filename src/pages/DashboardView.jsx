@@ -26,17 +26,32 @@ const DashboardCard = ({ title, icon: Icon, borderColorClass = "border-blue-500"
 );
 
 // Custom Tooltip
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload, label, total }) => {
     if (active && payload && payload.length) {
         return (
             <div className="bg-white/95 backdrop-blur-md p-2 border border-gray-200 shadow-xl rounded-xl text-xs z-50">
                 <p className="font-bold text-gray-800 mb-1">{label}</p>
-                {payload.map((entry, index) => (
-                    <p key={index} className="font-medium flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color || entry.fill || entry.stroke }}></span>
-                        <span style={{ color: '#374151' }}>{entry.name}: {entry.value}</span>
-                    </p>
-                ))}
+                {payload.map((entry, index) => {
+                    // Check if 'percent' is natively provided (Recharts often does for Pie)
+                    // If not, calculate using 'total' prop if available.
+                    let percentage = null;
+                    if (entry.percent !== undefined) {
+                        percentage = (entry.percent * 100).toFixed(1);
+                    } else if (total) {
+                        percentage = ((entry.value / total) * 100).toFixed(1);
+                    } else if (entry.payload && entry.payload.percent !== undefined) {
+                        percentage = (entry.payload.percent * 100).toFixed(1);
+                    }
+
+                    return (
+                        <p key={index} className="font-medium flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color || entry.fill || entry.stroke }}></span>
+                            <span style={{ color: '#374151' }}>
+                                {entry.name}: {percentage ? `${percentage}% (${entry.value})` : entry.value}
+                            </span>
+                        </p>
+                    );
+                })}
             </div>
         );
     }
@@ -483,7 +498,7 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
     const handleCpIdChange = (val) => {
         setSelectedCpId(val);
         setCurrentFilter('All Files');
-        setSelectedStation('All');
+        setSelectedStation('All'); // Fix potential bug in original code if copy-pasted, making sure logic is consistent
     };
 
     const handleStationChange = (val) => {
@@ -545,9 +560,11 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
         { name: 'Auto', value: (activeResult?.report_1?.['Auto Start'] || 0) + (activeResult?.report_2?.['Auto Start'] || 0) },
         { name: 'RFID', value: (activeResult?.report_1?.['RFID Start'] || 0) + (activeResult?.report_2?.['RFID Start'] || 0) }
     ].filter(d => d.value > 0);
+    const pieTotal = pieData.reduce((acc, curr) => acc + curr.value, 0);
 
     // Error Data
     const errorData = processErrorBreakdown(activeResult);
+    const errorTotal = errorData.reduce((acc, curr) => acc + curr.value, 0);
     const ERROR_COLORS = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6366F1'];
 
     // Dynamic Daily Line Data
@@ -689,7 +706,7 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
                                         <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip content={<CustomTooltip />} />
+                                <Tooltip content={<CustomTooltip total={pieTotal} />} />
                                 <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
                             </PieChart>
                         </ResponsiveContainer>
@@ -755,7 +772,7 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
                                         <Cell key={`cell-${index}`} fill={ERROR_COLORS[index % ERROR_COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip content={<CustomTooltip />} />
+                                <Tooltip content={<CustomTooltip total={errorTotal} />} />
                                 <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
                             </PieChart>
                         </ResponsiveContainer>
