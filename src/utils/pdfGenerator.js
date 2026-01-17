@@ -375,6 +375,8 @@ const renderReportPage = (doc, data, title) => {
      body: [
        ['Preparing', combinedPreparing],
        ['Precharging Failure', combinedPrechargingFailure],
+       ['Charging', combinedCharging],
+       ['Positive Stops', combinedSuccessful],
        ['Negative Stops (Errors)', combinedFailed],
      ],
      theme: 'grid',
@@ -493,6 +495,8 @@ const renderReportPage = (doc, data, title) => {
       body: [
         ['Preparing', report.data['Preparing Sessions'] || 0],
         ['Precharging Failure', prechargingFailure],
+        ['Charging', report.data['Charging Sessions'] || 0],
+        ['Positive Stops', report.data['Successful Sessions'] || 0],
         ['Negative Stops (Errors)', report.data['Failed / Error Stops'] || 0],
       ],
       theme: 'grid',
