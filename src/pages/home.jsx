@@ -51,6 +51,36 @@ export default function Home() {
     localStorage.setItem('zeon_showDashboard', showDashboard);
   }, [showDashboard]);
 
+  // Session Timeout (5 minutes inactivity)
+  useEffect(() => {
+    let timeoutId;
+    const TIMEOUT_DURATION = 5 * 60 * 1000; // 5 minutes
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        // Clear all persistent data
+        localStorage.removeItem('zeon_allResults');
+        localStorage.removeItem('zeon_currentFilter');
+        localStorage.removeItem('zeon_showDashboard');
+        // Reload page to "start from first"
+        window.location.reload();
+      }, TIMEOUT_DURATION);
+    };
+
+    // Tracking user activity
+    const activityEvents = ['mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
+    activityEvents.forEach(event => window.addEventListener(event, resetTimer));
+
+    // Initial start
+    resetTimer();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      activityEvents.forEach(event => window.removeEventListener(event, resetTimer));
+    };
+  }, []);
+
   // Derived result based on filter
   const result = useMemo(() => {
     if (!allResults) return null;

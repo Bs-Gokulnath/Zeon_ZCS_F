@@ -207,7 +207,7 @@ const renderReportPage = (doc, data, title) => {
       const isFailed = status && (status.toString().toLowerCase().includes('failed') || status.toString().toLowerCase().includes('error'));
       const isPrecharge = vendorCode === 'Precharging Failure';
 
-      if (isFailed || isPrecharge || vendorCode || getVal(row, 'reason', 'Reason') || getVal(row, 'info', 'Info')) {
+      if (isFailed || isPrecharge) {
         // Get Session ID
         const sessionId = getVal(row, 'Session ID', 'SessionId', 'Transaction Id', 'TransactionId', 'Id') || 'Unknown';
 
@@ -375,9 +375,7 @@ const renderReportPage = (doc, data, title) => {
      body: [
        ['Preparing', combinedPreparing],
        ['Precharging Failure', combinedPrechargingFailure],
-       ['Charging', combinedCharging],
-       ['Positive Stops', combinedSuccessful],
-       ['Negative Stops', combinedFailed],
+       ['Negative Stops (Errors)', combinedFailed],
      ],
      theme: 'grid',
      headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
@@ -495,9 +493,7 @@ const renderReportPage = (doc, data, title) => {
       body: [
         ['Preparing', report.data['Preparing Sessions'] || 0],
         ['Precharging Failure', prechargingFailure],
-        ['Charging', report.data['Charging Sessions'] || 0],
-        ['Positive Stops', report.data['Successful Sessions'] || 0],
-        ['Negative Stops', report.data['Failed / Error Stops'] || 0],
+        ['Negative Stops (Errors)', report.data['Failed / Error Stops'] || 0],
       ],
       theme: 'grid',
       headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
