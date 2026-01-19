@@ -269,6 +269,22 @@ export default function Home() {
     setAllResults(null);
   };
 
+  const getCPID = (data) => {
+    try {
+      if (!data || !data.info) return null;
+      let info = data.info;
+      if (typeof info === 'string') info = JSON.parse(info);
+      if (Array.isArray(info) && info.length > 0) {
+        const item = info[0];
+        // excessive checking for various casings
+        return item['Charge Point id'] || item['Charge Point Id'] || item['chargePointId'] || null;
+      }
+    } catch (e) {
+      return null;
+    }
+    return null;
+  };
+
   return (
     <div className="h-screen overflow-hidden">
       <div className={`bg-white w-full h-full flex flex-col ${result ? 'p-0' : 'flex items-center justify-center p-5'}`}>
@@ -405,7 +421,7 @@ export default function Home() {
               {/* File Filter Dropdown */}
               {allResults && Object.keys(allResults).length > 1 && (
                 <div className="ml-6 flex items-center gap-2 flex-1">
-                  <label className="text-gray-700 text-sm font-semibold whitespace-nowrap">Filter by OEM:</label>
+                  <label className="text-gray-700 text-sm font-semibold whitespace-nowrap">Filter by CPID:</label>
                   <select
                     value={currentFilter}
                     onChange={(e) => setCurrentFilter(e.target.value)}
@@ -417,17 +433,11 @@ export default function Home() {
                       .sort()
                       .map(fileName => {
                         const data = allResults[fileName];
-                        let oemName = 'Unknown';
-                        try {
-                          if (data && data.info) {
-                            let info = data.info;
-                            if (typeof info === 'string') info = JSON.parse(info);
-                            if (Array.isArray(info) && info.length > 0) oemName = info[0]['OEM Name'] || 'Unknown';
-                          }
-                        } catch (e) { }
+                        let cpId = getCPID(data) || 'Unknown';
 
-                        // Display 'OEM Name (Filename)' to ensure uniqueness and clarity
-                        const label = oemName !== 'Unknown' ? `${oemName} (${fileName})` : fileName;
+                        // Display 'CPID' primarily, fallback to filename or show combined if useful
+                        // User request: "need the cpid of that file name to be displayed"
+                        const label = cpId !== 'Unknown' ? cpId : fileName;
 
                         return (
                           <option key={fileName} value={fileName}>{label}</option>
@@ -544,7 +554,15 @@ export default function Home() {
                 onClick={() => {
                   const dataToPrint = currentFilter === 'All Files' ? allResults : result;
                   // Pass the filename if it's a single file
-                  const filename = currentFilter === 'All Files' ? 'Combined_Report' : currentFilter;
+                  let filename = currentFilter;
+                  if (currentFilter !== 'All Files') {
+                    // Try to get CPID to use as filename
+                    const cpId = getCPID(dataToPrint);
+                    if (cpId) filename = cpId;
+                  } else {
+                    filename = 'Combined_Report';
+                  }
+
                   generateChargerHealthPDF(dataToPrint, filename);
                 }}
                 className="flex-1 bg-red-600 text-white border-none py-3 px-6 rounded-xl text-base font-semibold cursor-pointer transition-all duration-300 hover:bg-red-700 hover:shadow-[0_10px_25px_rgba(220,38,38,0.4)] active:translate-y-0 flex items-center justify-center gap-2 min-w-[200px]"

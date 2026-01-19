@@ -206,7 +206,6 @@ const renderReportPage = (doc, data, title) => {
       const vendorCode = getVal(row, 'VendorErrorCode', 'VENDORERRORCODE', 'vendorErrorCode');
       const isFailed = status && (status.toString().toLowerCase().includes('failed') || status.toString().toLowerCase().includes('error'));
       const isPrecharge = vendorCode === 'Precharging Failure';
-
       if (isFailed || isPrecharge) {
         // Get Session ID
         const sessionId = getVal(row, 'Session ID', 'SessionId', 'Transaction Id', 'TransactionId', 'Id') || 'Unknown';
@@ -260,7 +259,7 @@ const renderReportPage = (doc, data, title) => {
           errorJson = JSON.stringify(cleanError, null, 2);
         }
 
-        const errorObj = { sessionId, json: errorJson, rawTime };
+        const errorObj = { sessionId, json: errorJson, rawTime, timestamp: formattedTime };
         if (isPrecharge) {
           precharging.push(errorObj);
         } else {
@@ -619,15 +618,15 @@ const renderReportPage = (doc, data, title) => {
     connectorY += 5;
 
     if (errors.precharging.length > 0) {
-      const preBody = errors.precharging.map(e => [e.json, e.sessionId, "1"]);
+      const preBody = errors.precharging.map(e => [e.json, e.timestamp, e.sessionId, "1"]);
       autoTable(doc, {
         startY: connectorY,
-        head: [['Error Details', 'Transaction IDs', 'Count']],
+        head: [['Error Details', 'Time', 'Transaction IDs', 'Count']],
         body: preBody,
         theme: 'grid',
         headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
         bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
-        columnStyles: { 0: { cellWidth: 45 }, 1: { cellWidth: 35 }, 2: { cellWidth: 10, halign: 'center' } },
+        columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 15 }, 2: { cellWidth: 30 }, 3: { cellWidth: 10, halign: 'center' } },
         margin: { left: report.colX },
         tableWidth: colWidth,
       });
@@ -643,21 +642,75 @@ const renderReportPage = (doc, data, title) => {
     connectorY += 5;
 
     if (errors.general.length > 0) {
-      const errorBody = errors.general.map(e => [e.json, e.sessionId, "1"]);
+      const errorBody = errors.general.map(e => [e.json, e.timestamp, e.sessionId, "1"]);
       autoTable(doc, {
         startY: connectorY,
-        head: [['Error Details', 'Transaction IDs', 'Count']],
+        head: [['Error Details', 'Time', 'Transaction IDs', 'Count']],
         body: errorBody,
         theme: 'grid',
         headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
         bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
-        columnStyles: { 0: { cellWidth: 45 }, 1: { cellWidth: 35 }, 2: { cellWidth: 10, halign: 'center' } },
+        columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 15 }, 2: { cellWidth: 30 }, 3: { cellWidth: 10, halign: 'center' } },
         margin: { left: report.colX },
         tableWidth: colWidth,
       });
     } else {
        doc.setFontSize(5);
        doc.text('No other Failed/Error stops recorded.', report.colX + 2, connectorY + 2);
+    }
+
+    connectorY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 3 : connectorY + 8;
+
+    // Section 6 - Idle Time Errors
+    createSectionHeader('6. Idle Error Description', report.colX, connectorY, colWidth);
+    connectorY += 5;
+
+    const idleErrors = report.data['Idle Time Errors'] || [];
+    if (idleErrors.length > 0) {
+      const idleBody = idleErrors.map(e => {
+         // Format timestamp
+         let displayTime = e.timestamp || '—';
+         try {
+           if(e.timestamp) {
+             const d = new Date(e.timestamp);
+             if (!isNaN(d.getTime())) {
+               // Compact format for table
+               displayTime = d.toLocaleString('en-GB', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(',', '');
+             }
+           }
+         } catch(e) {}
+         
+         return [
+           displayTime,
+           e.command || '-',
+           e.status || '-',
+           e.errorCode || '-',
+           e.info || '-',
+           e.vendorErrorCode || '-'
+         ];
+      });
+
+      autoTable(doc, {
+        startY: connectorY,
+        head: [['Time', 'Command', 'Status', 'Error Code', 'Info', 'Vendor Code']],
+        body: idleBody,
+        theme: 'grid',
+        headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 4, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
+        bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
+        columnStyles: { 
+          0: { cellWidth: 16 }, 
+          1: { cellWidth: 20 }, 
+          2: { cellWidth: 10 }, 
+          3: { cellWidth: 12 },
+          4: { cellWidth: 22 },
+          5: { cellWidth: 10 }
+        },
+        margin: { left: report.colX },
+        tableWidth: colWidth,
+      });
+    } else {
+       doc.setFontSize(5);
+       doc.text('No Idle errors recorded.', report.colX + 2, connectorY + 2);
     }
   });
 
