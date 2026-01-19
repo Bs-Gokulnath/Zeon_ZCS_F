@@ -241,6 +241,33 @@ const renderReportPage = (doc, data, title) => {
             if (str.includes('"info"') || str.includes('"timestamp"') || str.includes('"reason"')) {
               errorJson = JSON.stringify(val, null, 2);
               foundRaw = true;
+
+              // RE-ADDED: Extract timestamp from nested object if missing at top level
+              if (formattedTime === '—') {
+                let extractedTime = null;
+                // Handle array case (e.g. [{timestamp: ...}])
+                if (Array.isArray(val) && val.length > 0 && val[0] && val[0].timestamp) {
+                  extractedTime = val[0].timestamp;
+                } 
+                // Handle object case (e.g. {timestamp: ...})
+                else if (!Array.isArray(val) && val.timestamp) {
+                  extractedTime = val.timestamp;
+                }
+
+                if (extractedTime) {
+                  try {
+                    const eD = new Date(extractedTime);
+                    if (!isNaN(eD.getTime())) {
+                       rawTime = eD.getTime(); 
+                       formattedTime = eD.toLocaleString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(',', '');
+                    } else {
+                       formattedTime = String(extractedTime);
+                    }
+                  } catch (e) { 
+                    formattedTime = String(extractedTime); 
+                  }
+                }
+              }
               break;
             }
           }
@@ -602,85 +629,164 @@ const renderReportPage = (doc, data, title) => {
     return page2Y;
   };
 
-  reports.forEach((report) => {
-    if (!report.data) return;
-    
-    let connectorY = enterParallelColumnP2();
+  // Prepare reports data first to avoid repetitive logic
+  const preparedReports = reports.map(report => {
+    if (!report.data) return null;
     const connectorKey = report.key === 'report_1' ? 'Connector1' : 'Connector2';
     const errors = getErrorList(data[connectorKey]);
+    return { ...report, errors };
+  }).filter(Boolean);
 
-    // Header repeated for context
-    createSectionHeader(report.name + ' - DETAILS', report.colX, connectorY, colWidth);
-    connectorY += 10;
+  // Function to determine next start position
+  let currentStartPage = errorPageStart;
+  let currentStartY = page2Y;
 
-    // Section 4 - Precharging Description
-    createSectionHeader('4. Precharging Description', report.colX, connectorY, colWidth);
-    connectorY += 5;
+  // Helper to sync positions
+  const syncPositions = (pos1, pos2) => {
+    if (pos1.page > pos2.page) return pos1;
+    if (pos2.page > pos1.page) return pos2;
+    return { page: pos1.page, y: Math.max(pos1.y, pos2.y) };
+  };
 
-    if (errors.precharging.length > 0) {
-      const preBody = errors.precharging.map(e => [e.json, e.timestamp, e.sessionId, "1"]);
+  // 0. INITIAL HEADERS ("CONNECTOR X - DETAILS")
+  let endPosMap = new Map();
+  
+  preparedReports.forEach((report, index) => {
+    // Reset to current start position for this column
+    doc.setPage(currentStartPage);
+    let y = currentStartY;
+
+    // Hook addPage to handle multiple pages correctly
+    doc.addPage = function() {
+      const pageCount = doc.internal.getNumberOfPages();
+      const currentPageFromInternal = doc.internal.getCurrentPageInfo().pageNumber;
+      
+      let nextPageIndex = currentPageFromInternal + 1;
+      if (nextPageIndex > pageCount) {
+        originalAddPage();
+      } else {
+        doc.setPage(nextPageIndex);
+      }
+      
+      if (doc.internal.getCurrentPageInfo().pageNumber > maxPageReached) {
+        maxPageReached = doc.internal.getCurrentPageInfo().pageNumber;
+      }
+      return this;
+    };
+
+    createSectionHeader(report.name + ' - DETAILS', report.colX, y, colWidth);
+    y += 10; // Spacing after main header
+
+    endPosMap.set(index, { page: doc.internal.getCurrentPageInfo().pageNumber, y: y });
+  });
+
+  // Calculate new common start position
+  let maxPos = { page: currentStartPage, y: currentStartY };
+  endPosMap.forEach(pos => { maxPos = syncPositions(maxPos, pos); });
+  currentStartPage = maxPos.page;
+  currentStartY = maxPos.y;
+
+
+  // 1. SECTION 4 - PRECHARGING
+  endPosMap.clear();
+  preparedReports.forEach((report, index) => {
+    doc.setPage(currentStartPage);
+    let y = currentStartY;
+
+    createSectionHeader('4. Precharging Description', report.colX, y, colWidth);
+    y += 5;
+
+    if (report.errors.precharging.length > 0) {
+      const preBody = report.errors.precharging.map((e, idx) => [idx + 1, e.json, e.timestamp, e.sessionId]);
       autoTable(doc, {
-        startY: connectorY,
-        head: [['Error Details', 'Time', 'Transaction IDs', 'Count']],
+        startY: y,
+        head: [['S.No', 'Error Details', 'Time', 'Transaction IDs']],
         body: preBody,
         theme: 'grid',
         headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
         bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
-        columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 15 }, 2: { cellWidth: 30 }, 3: { cellWidth: 10, halign: 'center' } },
+        columnStyles: { 0: { cellWidth: 8, halign: 'center' }, 1: { cellWidth: 40 }, 2: { cellWidth: 15 }, 3: { cellWidth: 27 } },
         margin: { left: report.colX },
         tableWidth: colWidth,
       });
-      connectorY = doc.lastAutoTable.finalY + 3;
+      y = doc.lastAutoTable.finalY + 3;
     } else {
-       doc.setFontSize(5);
-       doc.text('No precharging failures recorded.', report.colX + 2, connectorY + 2);
-       connectorY += 6;
+      doc.setFontSize(5);
+      doc.text('No precharging failures recorded.', report.colX + 2, y + 2);
+      y += 6;
     }
+    endPosMap.set(index, { page: doc.internal.getCurrentPageInfo().pageNumber, y: y });
+  });
 
-    // Section 5 - Error Description
-    createSectionHeader('5. Error Description', report.colX, connectorY, colWidth);
-    connectorY += 5;
+  // Sync for Section 5
+  maxPos = { page: currentStartPage, y: currentStartY };
+  endPosMap.forEach(pos => { maxPos = syncPositions(maxPos, pos); });
+  currentStartPage = maxPos.page;
+  currentStartY = maxPos.y + 5; // Add extra spacing between logical sections
 
-    if (errors.general.length > 0) {
-      const errorBody = errors.general.map(e => [e.json, e.timestamp, e.sessionId, "1"]);
+
+  // 2. SECTION 5 - ERROR DESCRIPTION
+  endPosMap.clear();
+  preparedReports.forEach((report, index) => {
+    doc.setPage(currentStartPage);
+    let y = currentStartY;
+
+    createSectionHeader('5. Negative Stops', report.colX, y, colWidth);
+    y += 5;
+
+    if (report.errors.general.length > 0) {
+      const errorBody = report.errors.general.map((e, idx) => [idx + 1, e.json, e.timestamp, e.sessionId]);
       autoTable(doc, {
-        startY: connectorY,
-        head: [['Error Details', 'Time', 'Transaction IDs', 'Count']],
+        startY: y,
+        head: [['S.No', 'Error Details', 'Time', 'Transaction IDs']],
         body: errorBody,
         theme: 'grid',
         headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
         bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
-        columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 15 }, 2: { cellWidth: 30 }, 3: { cellWidth: 10, halign: 'center' } },
+        columnStyles: { 0: { cellWidth: 8, halign: 'center' }, 1: { cellWidth: 40 }, 2: { cellWidth: 15 }, 3: { cellWidth: 27 } },
         margin: { left: report.colX },
         tableWidth: colWidth,
       });
+      y = doc.lastAutoTable.finalY + 3;
     } else {
-       doc.setFontSize(5);
-       doc.text('No other Failed/Error stops recorded.', report.colX + 2, connectorY + 2);
+      doc.setFontSize(5);
+      doc.text('No other Failed/Error stops recorded.', report.colX + 2, y + 2);
+      y += 6;
     }
+    endPosMap.set(index, { page: doc.internal.getCurrentPageInfo().pageNumber, y: y });
+  });
 
-    connectorY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 3 : connectorY + 8;
+  // Sync for Section 6
+  maxPos = { page: currentStartPage, y: currentStartY };
+  endPosMap.forEach(pos => { maxPos = syncPositions(maxPos, pos); });
+  currentStartPage = maxPos.page;
+  currentStartY = maxPos.y + 5;
 
-    // Section 6 - Idle Time Errors
-    createSectionHeader('6. Idle Error Description', report.colX, connectorY, colWidth);
-    connectorY += 5;
+
+  // 3. SECTION 6 - IDLE ERROR DESCRIPTION
+  endPosMap.clear();
+  preparedReports.forEach((report, index) => {
+    doc.setPage(currentStartPage);
+    let y = currentStartY;
+
+    createSectionHeader('6. Idle Error Description', report.colX, y, colWidth);
+    y += 5;
 
     const idleErrors = report.data['Idle Time Errors'] || [];
     if (idleErrors.length > 0) {
-      const idleBody = idleErrors.map(e => {
-         // Format timestamp
+      const idleBody = idleErrors.map((e, idx) => {
          let displayTime = e.timestamp || '—';
          try {
            if(e.timestamp) {
              const d = new Date(e.timestamp);
              if (!isNaN(d.getTime())) {
-               // Compact format for table
                displayTime = d.toLocaleString('en-GB', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(',', '');
              }
            }
          } catch(e) {}
          
          return [
+           idx + 1,
            displayTime,
            e.command || '-',
            e.status || '-',
@@ -691,30 +797,39 @@ const renderReportPage = (doc, data, title) => {
       });
 
       autoTable(doc, {
-        startY: connectorY,
-        head: [['Time', 'Command', 'Status', 'Error Code', 'Info', 'Vendor Code']],
+        startY: y,
+        head: [['S.No', 'Time', 'Command', 'Status', 'Error Code', 'Info', 'Vendor Code']],
         body: idleBody,
         theme: 'grid',
         headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 4, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
         bodyStyles: { fontSize: 4, textColor: textColor, cellPadding: 0.5, minCellHeight: 4, overflow: 'linebreak' },
         columnStyles: { 
-          0: { cellWidth: 16 }, 
-          1: { cellWidth: 20 }, 
-          2: { cellWidth: 10 }, 
-          3: { cellWidth: 12 },
-          4: { cellWidth: 22 },
-          5: { cellWidth: 10 }
+          0: { cellWidth: 8, halign: 'center' }, 
+          1: { cellWidth: 16 }, 
+          2: { cellWidth: 18 }, 
+          3: { cellWidth: 10 }, 
+          4: { cellWidth: 12 },
+          5: { cellWidth: 16 },
+          6: { cellWidth: 10 }
         },
         margin: { left: report.colX },
         tableWidth: colWidth,
       });
+      y = doc.lastAutoTable.finalY + 3;
     } else {
-       doc.setFontSize(5);
-       doc.text('No Idle errors recorded.', report.colX + 2, connectorY + 2);
+      doc.setFontSize(5);
+      doc.text('No Idle errors recorded.', report.colX + 2, y + 2);
+      y += 6;
     }
+    endPosMap.set(index, { page: doc.internal.getCurrentPageInfo().pageNumber, y: y });
   });
 
-  // Restore original addPage and jump to the furthest page reached
+  // Final sync
+  maxPos = { page: currentStartPage, y: currentStartY };
+  endPosMap.forEach(pos => { maxPos = syncPositions(maxPos, pos); });
+  maxPageReached = Math.max(maxPageReached, maxPos.page);
+  
+  // Cleanup doc object
   doc.addPage = originalAddPage;
   doc.setPage(maxPageReached);
 };

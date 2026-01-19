@@ -389,8 +389,13 @@ const getChargePointID = (data) => {
         if (data && data.info) {
             let info = data.info;
             if (typeof info === 'string') info = JSON.parse(info);
+
+            // Check array entries until we find a valid ID
             if (Array.isArray(info) && info.length > 0) {
-                return info[0]['Charge Point id'] || 'Unknown';
+                for (const item of info) {
+                    const id = item['Charge Point id'] || item['Charge Point Id'] || item['chargePointId'] || item['Charge Point ID'];
+                    if (id) return id;
+                }
             }
         }
     } catch (e) { }
@@ -447,7 +452,7 @@ const aggregateData = (resultsList) => {
 export default function DashboardView({ result, onClose, currentFilter, setCurrentFilter, allResults }) {
 
     // Data Preparation
-    const filters = allResults && Object.keys(allResults).length > 1 ? Object.keys(allResults).sort() : [];
+    const filters = allResults && Object.keys(allResults).length > 1 ? Object.keys(allResults).filter(k => k !== 'All Files').sort() : [];
 
     // State
     const [selectedCpId, setSelectedCpId] = useState('All');
@@ -528,17 +533,9 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
         { value: 'All Files', label: 'All Files' },
         ...filters.map(f => {
             const data = allResults[f];
-            let oemName = '';
-            try {
-                if (data && data.info) {
-                    let info = data.info;
-                    if (typeof info === 'string') info = JSON.parse(info);
-                    if (Array.isArray(info) && info.length > 0) {
-                        oemName = info[0]['OEM Name'] || info[0]['Station Alias Name'];
-                    }
-                }
-            } catch (e) { }
-            return { value: f, label: oemName ? `${oemName} - ${f}` : f };
+            const cpid = getChargePointID(data);
+            const displayLabel = cpid !== 'Unknown' ? cpid : f;
+            return { value: f, label: displayLabel };
         })
     ];
 

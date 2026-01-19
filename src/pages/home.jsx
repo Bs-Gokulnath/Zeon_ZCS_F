@@ -437,7 +437,7 @@ export default function Home() {
 
                         // Display 'CPID' primarily, fallback to filename or show combined if useful
                         // User request: "need the cpid of that file name to be displayed"
-                        const label = cpId !== 'Unknown' ? cpId : fileName;
+                        const label = (cpId && cpId !== 'Unknown') ? cpId : fileName;
 
                         return (
                           <option key={fileName} value={fileName}>{label}</option>
