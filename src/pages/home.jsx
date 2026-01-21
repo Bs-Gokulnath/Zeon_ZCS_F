@@ -51,33 +51,39 @@ export default function Home() {
     localStorage.setItem('zeon_showDashboard', showDashboard);
   }, [showDashboard]);
 
-  // Session Timeout (5 minutes inactivity)
+  // Session Timeout (Daily reset at midnight)
   useEffect(() => {
     let timeoutId;
-    const TIMEOUT_DURATION = 5 * 60 * 1000; // 5 minutes
 
-    const resetTimer = () => {
+    const scheduleEndOfDayReset = () => {
+      // Clear any existing timeout
       if (timeoutId) clearTimeout(timeoutId);
+
+      // Calculate milliseconds until midnight
+      const now = new Date();
+      const midnight = new Date(now);
+      midnight.setHours(24, 0, 0, 0); // Next midnight
+      const msUntilMidnight = midnight.getTime() - now.getTime();
+
+      console.log(`Session will reset at midnight (in ${Math.round(msUntilMidnight / 1000 / 60)} minutes)`);
+
+      // Schedule the reset
       timeoutId = setTimeout(() => {
+        console.log('End of day - Clearing session data');
         // Clear all persistent data
         localStorage.removeItem('zeon_allResults');
         localStorage.removeItem('zeon_currentFilter');
         localStorage.removeItem('zeon_showDashboard');
-        // Reload page to "start from first"
+        // Reload page to start fresh
         window.location.reload();
-      }, TIMEOUT_DURATION);
+      }, msUntilMidnight);
     };
 
-    // Tracking user activity
-    const activityEvents = ['mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
-    activityEvents.forEach(event => window.addEventListener(event, resetTimer));
-
-    // Initial start
-    resetTimer();
+    // Initial schedule
+    scheduleEndOfDayReset();
 
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
-      activityEvents.forEach(event => window.removeEventListener(event, resetTimer));
     };
   }, []);
 
