@@ -4,6 +4,57 @@ import { generateChargerHealthPDF } from '../utils/pdfGenerator';
 import zeonLogo from '../assets/zeon_charging.webp';
 import DashboardView from './DashboardView';
 import { AuthenticationPieChart, UsageReadinessFunnelChart, PowerQualityLineChart } from './report_graphs';
+import MultiSelectDropdown from '../components/MultiSelectDropdown';
+
+// Helper: Aggregate Results (Defined before usage in useMemo)
+const aggregateResults = (resultsList) => {
+  if (!resultsList || !Array.isArray(resultsList) || resultsList.length === 0) return {};
+  if (resultsList.length === 1) return resultsList[0] || {};
+
+  const aggregated = {};
+  const firstValidInfo = resultsList.find(r => r && r.info)?.info;
+
+  resultsList.forEach(result => {
+    if (!result || typeof result !== 'object') return;
+    Object.keys(result).forEach(key => {
+      // Handle Report Summary Objects (report_1, report_2)
+      if (key.startsWith('report_')) {
+        if (!aggregated[key]) aggregated[key] = {};
+        if (!result[key] || typeof result[key] !== 'object') return;
+
+        Object.entries(result[key]).forEach(([metric, value]) => {
+          if (typeof value === 'number') {
+            aggregated[key][metric] = (aggregated[key][metric] || 0) + value;
+          } else if (value && typeof value === 'object') {
+            // Deep merge for error summaries
+            if (!aggregated[key][metric]) aggregated[key][metric] = {};
+            Object.entries(value).forEach(([subKey, subVal]) => {
+              if (typeof subVal === 'number') {
+                aggregated[key][metric][subKey] = (aggregated[key][metric][subKey] || 0) + subVal;
+              } else if (subVal) {
+                aggregated[key][metric][subKey] = subVal;
+              }
+            });
+          } else {
+            aggregated[key][metric] = value;
+          }
+        });
+      }
+      // Handle Connector Data Arrays
+      else if (Array.isArray(result[key])) {
+        if (!aggregated[key]) aggregated[key] = [];
+        aggregated[key] = [...aggregated[key], ...result[key]];
+      }
+      // Handle basic metadata
+      else if (key === 'info' || key === 'date') {
+        if (!aggregated[key]) aggregated[key] = result[key];
+      }
+    });
+  });
+
+  if (firstValidInfo && !aggregated.info) aggregated.info = firstValidInfo;
+  return aggregated;
+};
 
 export default function Home() {
   // Initialize state from localStorage if available
@@ -22,8 +73,14 @@ export default function Home() {
     }
   });
 
-  const [currentFilter, setCurrentFilter] = useState(() => {
-    return localStorage.getItem('zeon_currentFilter') || 'All Files';
+  const [selectedFiles, setSelectedFiles] = useState(() => {
+    try {
+      const saved = localStorage.getItem('zeon_selectedFiles');
+      const parsed = saved ? JSON.parse(saved) : ['All Files'];
+      return Array.isArray(parsed) ? parsed : ['All Files'];
+    } catch (e) {
+      return ['All Files'];
+    }
   });
 
   const [showDashboard, setShowDashboard] = useState(() => {
@@ -44,8 +101,8 @@ export default function Home() {
   }, [allResults]);
 
   useEffect(() => {
-    localStorage.setItem('zeon_currentFilter', currentFilter);
-  }, [currentFilter]);
+    localStorage.setItem('zeon_selectedFiles', JSON.stringify(selectedFiles));
+  }, [selectedFiles]);
 
   useEffect(() => {
     localStorage.setItem('zeon_showDashboard', showDashboard);
@@ -72,7 +129,7 @@ export default function Home() {
         console.log('End of day - Clearing session data');
         // Clear all persistent data
         localStorage.removeItem('zeon_allResults');
-        localStorage.removeItem('zeon_currentFilter');
+        localStorage.removeItem('zeon_selectedFiles');
         localStorage.removeItem('zeon_showDashboard');
         // Reload page to start fresh
         window.location.reload();
@@ -87,27 +144,23 @@ export default function Home() {
     };
   }, []);
 
-  // Derived result based on filter
+  // Derived result based on selected files
   const result = useMemo(() => {
     if (!allResults) return null;
-    return allResults[currentFilter];
-  }, [allResults, currentFilter]);
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file && (file.type === 'text/csv' ||
-      file.type === 'application/vnd.ms-excel' ||
-      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-      file.type === 'application/zip' ||
-      file.type === 'application/x-zip-compressed')) {
-      setSelectedFile(file);
-      setAllResults(null);
-      // Auto-upload the file
-      handleUpload(file);
-    } else {
-      alert('Please upload a valid Excel, CSV, or ZIP file');
+    // If "All Files" is selected or nothing is selected
+    if (selectedFiles.includes('All Files') || selectedFiles.length === 0) {
+      return allResults['All Files'] || allResults;
     }
-  };
+
+    // If single file selected
+    if (selectedFiles.length === 1) {
+      return allResults[selectedFiles[0]];
+    }
+
+    // If multiple files selected, aggregate them
+    return aggregateResults(selectedFiles.map(fileName => allResults[fileName]).filter(Boolean));
+  }, [allResults, selectedFiles]);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -119,41 +172,15 @@ export default function Home() {
     setIsDragging(false);
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-
-    const file = e.dataTransfer.files[0];
-    if (file && (file.type === 'text/csv' ||
-      file.type === 'application/vnd.ms-excel' ||
-      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-      file.type === 'application/zip' ||
-      file.type === 'application/x-zip-compressed')) {
-      setSelectedFile(file);
-      setAllResults(null);
-      // Auto-upload the file
-      handleUpload(file);
-    } else {
-      alert('Please upload a valid Excel, CSV, or ZIP file');
-    }
+  const handleReduceUpload = async (file) => {
+    handleUpload(file);
   };
 
   const processFileAPI = async (file, mode) => {
     console.log('🔍 Processing file with mode:', mode);
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('data_source', mode.toLowerCase()); // Send 'cms' or 's3' to backend
-
-    // Debug: Log all FormData entries
-    console.log('📤 Sending data_source to backend:', mode.toLowerCase());
-    console.log('📦 FormData contents:');
-    for (let [key, value] of formData.entries()) {
-      if (key === 'file') {
-        console.log(`  ${key}:`, value.name, `(${value.size} bytes)`);
-      } else {
-        console.log(`  ${key}:`, value);
-      }
-    }
+    formData.append('data_source', mode.toLowerCase());
 
     const response = await fetch('/api/process-file', {
       method: 'POST',
@@ -165,76 +192,36 @@ export default function Home() {
     return await response.json();
   };
 
-  const aggregateResults = (resultsList) => {
-    if (resultsList.length === 0) return {};
-    if (resultsList.length === 1) return resultsList[0];
-
-    const aggregated = {};
-
-    resultsList.forEach(result => {
-      Object.keys(result).forEach(key => {
-        // Handle Report Summary Objects (report_1, report_2)
-        if (key.startsWith('report_')) {
-          if (!aggregated[key]) aggregated[key] = {};
-
-          Object.entries(result[key]).forEach(([metric, value]) => {
-            if (typeof value === 'number') {
-              aggregated[key][metric] = (aggregated[key][metric] || 0) + value;
-            } else {
-              // Keep the last seen non-number value or string
-              aggregated[key][metric] = value;
-            }
-          });
-        }
-        // Handle Connector Data Arrays (e.g. 115324)
-        else if (Array.isArray(result[key])) {
-          if (!aggregated[key]) aggregated[key] = [];
-          aggregated[key] = [...aggregated[key], ...result[key]];
-        }
-        // Handle other objects (like 'date', 'info') - just take the latest
-        else {
-          aggregated[key] = result[key];
-        }
-      });
-    });
-
-    return aggregated;
-  };
-
   const handleUpload = async (file) => {
     const fileToUpload = file || selectedFile;
     if (!fileToUpload) return;
 
     setUploading(true);
     setAllResults(null);
-    setCurrentFilter('All Files');
+    setSelectedFiles(['All Files']);
 
     try {
       const newResults = {};
 
       if (fileToUpload.name.toLowerCase().endsWith('.zip') || fileToUpload.type === 'application/zip' || fileToUpload.type === 'application/x-zip-compressed') {
-        console.log("Processing ZIP file:", fileToUpload.name);
         const zip = await JSZip.loadAsync(fileToUpload);
         const promises = [];
 
         zip.forEach((relativePath, zipEntry) => {
-          console.log("Found entry:", relativePath, "Dir:", zipEntry.dir);
           const lowerName = zipEntry.name.toLowerCase();
-          const fileName = zipEntry.name.split('/').pop(); // Extract filename only
+          const fileName = zipEntry.name.split('/').pop();
 
-          // Filter out folders, Mac metadata, and hidden files
           if (!zipEntry.dir &&
             !zipEntry.name.includes('__MACOSX') &&
             !fileName.startsWith('.') &&
             (lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls'))) {
 
-            console.log("Processing extracted file:", fileName);
             promises.push(
               zipEntry.async('blob').then(async (blob) => {
                 const extractedFile = new File([blob], fileName, { type: 'application/octet-stream' });
                 try {
                   const data = await processFileAPI(extractedFile, selectedMode);
-                  newResults[fileName] = data; // use clean filename
+                  newResults[fileName] = data;
                 } catch (e) {
                   console.error(`Failed to process ${fileName}`, e);
                 }
@@ -244,9 +231,7 @@ export default function Home() {
         });
 
         await Promise.all(promises);
-        console.log("Finished processing ZIP. Results keys:", Object.keys(newResults));
       } else {
-        // Single file processing
         const data = await processFileAPI(fileToUpload, selectedMode);
         newResults[fileToUpload.name] = data;
       }
@@ -256,9 +241,7 @@ export default function Home() {
         throw new Error("No valid files processed.");
       }
 
-      // Create aggregation
       newResults['All Files'] = aggregateResults(Object.values(newResults));
-
       setAllResults(newResults);
     } catch (error) {
       console.error('Upload error:', error);
@@ -267,6 +250,26 @@ export default function Home() {
       setSelectedFile(null);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setSelectedFile(file);
+      setAllResults(null);
+      handleUpload(file);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      setSelectedFile(file);
+      setAllResults(null);
+      handleUpload(file);
     }
   };
 
@@ -281,15 +284,14 @@ export default function Home() {
       let info = data.info;
       if (typeof info === 'string') info = JSON.parse(info);
       if (Array.isArray(info) && info.length > 0) {
-        const item = info[0];
-        // excessive checking for various casings
-        return item['Charge Point id'] || item['Charge Point Id'] || item['chargePointId'] || null;
+        return info[0]['Charge Point id'] || info[0]['Charge Point Id'] || info[0]['chargePointId'] || null;
       }
     } catch (e) {
       return null;
     }
     return null;
   };
+
 
   return (
     <div className="h-screen overflow-hidden">
@@ -428,28 +430,28 @@ export default function Home() {
               {allResults && Object.keys(allResults).length > 1 && (
                 <div className="ml-6 flex items-center gap-2 flex-1">
                   <label className="text-gray-700 text-sm font-semibold whitespace-nowrap">Filter by CPID:</label>
-                  <select
-                    value={currentFilter}
-                    onChange={(e) => setCurrentFilter(e.target.value)}
-                    className="bg-white text-black border border-gray-300 rounded-lg px-3 py-1 text-sm focus:ring-2 focus:ring-red-600 outline-none max-w-[400px] truncate"
-                  >
-                    <option value="All Files">All Files (Aggregated)</option>
-                    {Object.keys(allResults)
-                      .filter(k => k !== 'All Files')
-                      .sort()
-                      .map(fileName => {
-                        const data = allResults[fileName];
-                        let cpId = getCPID(data) || 'Unknown';
-
-                        // Display 'CPID' primarily, fallback to filename or show combined if useful
-                        // User request: "need the cpid of that file name to be displayed"
-                        const label = (cpId && cpId !== 'Unknown') ? cpId : fileName;
-
-                        return (
-                          <option key={fileName} value={fileName}>{label}</option>
-                        );
-                      })}
-                  </select>
+                  <MultiSelectDropdown
+                    options={[
+                      { value: 'All Files', label: 'All Files (Aggregated)' },
+                      ...Object.keys(allResults)
+                        .filter(k => k !== 'All Files')
+                        .sort()
+                        .map(fileName => {
+                          const data = allResults[fileName];
+                          let cpId = getCPID(data) || 'Unknown';
+                          const label = (cpId && cpId !== 'Unknown') ? cpId : fileName;
+                          return { value: fileName, label };
+                        })
+                    ]}
+                    selectedValues={selectedFiles}
+                    onChange={setSelectedFiles}
+                    placeholder="Search CPID..."
+                    allLabel="All Files (Aggregated)"
+                  />
+                  {/* File Count Badge */}
+                  <div className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap">
+                    {Object.keys(allResults).filter(k => k !== 'All Files').length} {Object.keys(allResults).filter(k => k !== 'All Files').length === 1 ? 'file' : 'files'}
+                  </div>
                 </div>
               )}
 
@@ -551,22 +553,21 @@ export default function Home() {
                     );
                   }
                   return null;
-                  return null;
                 })}
             </div>
 
             <div className="sticky bottom-0 flex gap-2 px-4 py-2 bg-gray-100 border-t-2 border-gray-300 z-10">
               <button
                 onClick={() => {
-                  const dataToPrint = currentFilter === 'All Files' ? allResults : result;
-                  // Pass the filename if it's a single file
-                  let filename = currentFilter;
-                  if (currentFilter !== 'All Files') {
-                    // Try to get CPID to use as filename
-                    const cpId = getCPID(dataToPrint);
-                    if (cpId) filename = cpId;
-                  } else {
-                    filename = 'Combined_Report';
+                  const isAll = selectedFiles.includes('All Files') || selectedFiles.length === 0;
+                  const dataToPrint = isAll ? allResults : result;
+
+                  let filename = 'Combined_Report';
+                  if (!isAll && selectedFiles.length === 1) {
+                    const cpId = getCPID(result);
+                    filename = cpId || selectedFiles[0];
+                  } else if (!isAll && selectedFiles.length > 1) {
+                    filename = `Multi_Filter_${selectedFiles.length}_Files`;
                   }
 
                   generateChargerHealthPDF(dataToPrint, filename);
@@ -616,8 +617,8 @@ export default function Home() {
         <DashboardView
           result={result}
           onClose={() => setShowDashboard(false)}
-          currentFilter={currentFilter}
-          setCurrentFilter={setCurrentFilter}
+          selectedFiles={selectedFiles}
+          setSelectedFiles={setSelectedFiles}
           allResults={allResults}
         />
       )}

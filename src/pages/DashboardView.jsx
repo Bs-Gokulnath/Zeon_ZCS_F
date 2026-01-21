@@ -7,6 +7,7 @@ import {
     BarChart, Bar
 } from 'recharts';
 import { X, Filter, BarChart3, Zap, Activity, CircleDot, Plug, Layers, RefreshCw } from 'lucide-react';
+import MultiSelectDropdown from '../components/MultiSelectDropdown';
 
 import zeonLogo from '../assets/zeon_charging.webp';
 
@@ -131,11 +132,14 @@ const processSessionTrend = (result) => {
 
     // 1. Gather all rows with valid dates
     const allRows = [];
-    Object.values(result).forEach(val => {
-        if (Array.isArray(val)) {
-            allRows.push(...val);
-        }
-    });
+    if (result && typeof result === 'object') {
+        Object.entries(result).forEach(([key, val]) => {
+            // Only take arrays that aren't meta-info
+            if (Array.isArray(val) && !key.startsWith('report_') && key !== 'info' && key !== 'date') {
+                allRows.push(...val);
+            }
+        });
+    }
 
     if (allRows.length === 0) return [];
 
@@ -418,38 +422,56 @@ const getStationName = (data) => {
 
 // Helper: Aggregate Results
 const aggregateData = (resultsList) => {
-    if (!resultsList || resultsList.length === 0) return {};
-    if (resultsList.length === 1) return resultsList[0];
+    if (!resultsList || !Array.isArray(resultsList) || resultsList.length === 0) return {};
+    if (resultsList.length === 1) return resultsList[0] || {};
 
-    const combined = {
+    const aggregated = {
         report_1: {},
-        report_2: {},
-        Connector1: [],
-        Connector2: [],
-        info: resultsList[0].info // Keep first file info for basic metadata
+        report_2: {}
     };
 
+    const firstValidInfo = resultsList.find(r => r && r.info)?.info;
     const sumKeys = ['Preparing Sessions', 'Charging Sessions', 'Successful Sessions', 'Failed / Error Stops', 'Remote Start', 'Auto Start', 'RFID Start'];
 
-    resultsList.forEach(res => {
-        // Report 1
-        sumKeys.forEach(k => {
-            combined.report_1[k] = (combined.report_1[k] || 0) + (res.report_1?.[k] || 0);
-        });
-        // Report 2
-        sumKeys.forEach(k => {
-            combined.report_2[k] = (combined.report_2[k] || 0) + (res.report_2?.[k] || 0);
-        });
+    resultsList.forEach(result => {
+        if (!result || typeof result !== 'object') return;
+        Object.keys(result).forEach(key => {
+            if (key.startsWith('report_')) {
+                if (!aggregated[key]) aggregated[key] = {};
+                if (!result[key] || typeof result[key] !== 'object') return;
 
-        // Merge Arrays
-        if (res.Connector1) combined.Connector1.push(...res.Connector1);
-        if (res.Connector2) combined.Connector2.push(...res.Connector2);
+                // Sum numeric metrics
+                sumKeys.forEach(metric => {
+                    const val = result[key][metric] || 0;
+                    aggregated[key][metric] = (aggregated[key][metric] || 0) + val;
+                });
+
+                // Aggregate Error Summaries if they exist
+                const errorSummaryKeys = ['Successful Error Summary', 'Failed / Error Error Summary'];
+                errorSummaryKeys.forEach(sKey => {
+                    if (result[key][sKey] && typeof result[key][sKey] === 'object') {
+                        if (!aggregated[key][sKey]) aggregated[key][sKey] = {};
+                        Object.entries(result[key][sKey]).forEach(([err, count]) => {
+                            if (typeof count === 'number') {
+                                aggregated[key][sKey][err] = (aggregated[key][sKey][err] || 0) + count;
+                            }
+                        });
+                    }
+                });
+            } else if (Array.isArray(result[key])) {
+                if (!aggregated[key]) aggregated[key] = [];
+                aggregated[key] = [...aggregated[key], ...result[key]];
+            } else if (key === 'info' || key === 'date') {
+                if (!aggregated[key]) aggregated[key] = result[key];
+            }
+        });
     });
 
-    return combined;
+    if (firstValidInfo && !aggregated.info) aggregated.info = firstValidInfo;
+    return aggregated;
 };
 
-export default function DashboardView({ result, onClose, currentFilter, setCurrentFilter, allResults }) {
+export default function DashboardView({ result, onClose, selectedFiles, setSelectedFiles, allResults }) {
 
     // Data Preparation
     const filters = allResults && Object.keys(allResults).length > 1 ? Object.keys(allResults).filter(k => k !== 'All Files').sort() : [];
@@ -485,9 +507,12 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
 
     // Determine Active Result
     const activeResult = useMemo(() => {
-        // 1. Specific File (Takes priority if selected)
-        if (currentFilter !== 'All Files') {
-            return allResults[currentFilter] || result;
+        // 1. Specific Files (Takes priority if selected)
+        if (selectedFiles && selectedFiles.length > 0 && !selectedFiles.includes('All Files')) {
+            if (selectedFiles.length === 1) {
+                return allResults[selectedFiles[0]] || result;
+            }
+            return aggregateData(selectedFiles.map(f => allResults[f]).filter(Boolean));
         }
         // 2. CP ID
         if (selectedCpId !== 'All' && groupedResults.byId[selectedCpId]) {
@@ -499,25 +524,25 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
         }
         // 4. Default Globals
         return result;
-    }, [currentFilter, selectedCpId, selectedStation, groupedResults, result, allResults]);
+    }, [selectedFiles, selectedCpId, selectedStation, groupedResults, result, allResults]);
 
     // Handlers
-    const handleFileFilterChange = (val) => {
-        setCurrentFilter(val);
+    const handleFileFilterChange = (vals) => {
+        setSelectedFiles(vals);
         setSelectedCpId('All');
         setSelectedStation('All');
     };
 
     const handleCpIdChange = (val) => {
         setSelectedCpId(val);
-        setCurrentFilter('All Files');
-        setSelectedStation('All'); // Fix potential bug in original code if copy-pasted, making sure logic is consistent
+        setSelectedFiles(['All Files']);
+        setSelectedStation('All');
     };
 
     const handleStationChange = (val) => {
         setSelectedStation(val);
         setSelectedCpId('All');
-        setCurrentFilter('All Files');
+        setSelectedFiles(['All Files']);
     };
 
     // Options for Filters
@@ -618,11 +643,10 @@ export default function DashboardView({ result, onClose, currentFilter, setCurre
 
                     {/* Filter 3: File Name */}
                     {filters.length > 0 && (
-                        <SearchableSelect
+                        <MultiSelectDropdown
                             options={fileOptions}
-                            value={currentFilter}
+                            selectedValues={selectedFiles}
                             onChange={handleFileFilterChange}
-                            icon={Filter}
                         />
                     )}
 
