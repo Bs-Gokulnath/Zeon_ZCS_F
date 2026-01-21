@@ -87,6 +87,15 @@ export default function Home() {
     return localStorage.getItem('zeon_showDashboard') === 'true';
   });
 
+  const [failedFiles, setFailedFiles] = useState(() => {
+    try {
+      const saved = localStorage.getItem('zeon_failedFiles');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
   // Persistence Effects
   useEffect(() => {
     if (allResults) {
@@ -107,6 +116,10 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem('zeon_showDashboard', showDashboard);
   }, [showDashboard]);
+
+  useEffect(() => {
+    localStorage.setItem('zeon_failedFiles', JSON.stringify(failedFiles));
+  }, [failedFiles]);
 
   // Session Timeout (Daily reset at midnight)
   useEffect(() => {
@@ -202,6 +215,7 @@ export default function Home() {
 
     try {
       const newResults = {};
+      const newFailed = [];
 
       if (fileToUpload.name.toLowerCase().endsWith('.zip') || fileToUpload.type === 'application/zip' || fileToUpload.type === 'application/x-zip-compressed') {
         const zip = await JSZip.loadAsync(fileToUpload);
@@ -224,6 +238,7 @@ export default function Home() {
                   newResults[fileName] = data;
                 } catch (e) {
                   console.error(`Failed to process ${fileName}`, e);
+                  newFailed.push({ name: fileName, reason: e.message });
                 }
               })
             );
@@ -232,9 +247,16 @@ export default function Home() {
 
         await Promise.all(promises);
       } else {
-        const data = await processFileAPI(fileToUpload, selectedMode);
-        newResults[fileToUpload.name] = data;
+        try {
+          const data = await processFileAPI(fileToUpload, selectedMode);
+          newResults[fileToUpload.name] = data;
+        } catch (e) {
+          console.error(`Failed to process ${fileToUpload.name}`, e);
+          newFailed.push({ name: fileToUpload.name, reason: e.message });
+        }
       }
+
+      setFailedFiles(newFailed);
 
       const keys = Object.keys(newResults);
       if (keys.length === 0) {
@@ -448,9 +470,30 @@ export default function Home() {
                     placeholder="Search CPID..."
                     allLabel="All Files (Aggregated)"
                   />
-                  {/* File Count Badge */}
-                  <div className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap">
-                    {Object.keys(allResults).filter(k => k !== 'All Files').length} {Object.keys(allResults).filter(k => k !== 'All Files').length === 1 ? 'file' : 'files'}
+                  {/* File Count Badges */}
+                  <div className="flex items-center gap-2">
+                    <div className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap">
+                      {Object.keys(allResults).filter(k => k !== 'All Files').length} Success
+                    </div>
+                    {failedFiles.length > 0 && (
+                      <div className="group relative">
+                        <div className="bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap cursor-help">
+                          {failedFiles.length} Failed
+                        </div>
+                        {/* Tooltip */}
+                        <div className="absolute top-full right-0 mt-2 w-64 bg-black text-white text-xs rounded-lg p-3 shadow-xl z-50 hidden group-hover:block max-h-60 overflow-y-auto">
+                          <p className="font-bold border-b border-gray-700 pb-1 mb-2">Failed Files ({failedFiles.length})</p>
+                          <ul className="space-y-1">
+                            {failedFiles.map((f, i) => (
+                              <li key={i} className="flex flex-col border-b border-gray-800 pb-1 last:border-0">
+                                <span className="font-semibold text-red-300 truncate">{f.name}</span>
+                                <span className="text-gray-400 text-[10px]">{f.reason}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
