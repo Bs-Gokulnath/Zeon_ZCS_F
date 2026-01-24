@@ -121,13 +121,21 @@ export default function MultiSelectDropdown({
                     </div>
 
                     {/* Select All / Clear All */}
-                    <div className="px-3 py-2 border-b border-gray-200 bg-gray-50">
+                    <div className="px-3 py-2 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
                         <button
                             onClick={handleSelectAll}
                             className="text-xs text-red-600 hover:text-red-700 font-semibold"
                         >
                             {isAllSelected ? 'Clear All' : 'Select All'}
                         </button>
+                        {!selectedValues.includes('All Files') && selectedValues.length > 0 && (
+                            <button
+                                onClick={() => onChange(['All Files'])}
+                                className="text-xs text-gray-600 hover:text-gray-800 font-semibold"
+                            >
+                                ✕ Reset to All
+                            </button>
+                        )}
                     </div>
 
                     {/* Options List */}

@@ -61,7 +61,13 @@ export default function Home() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [totalFiles, setTotalFiles] = useState(0);
+  const [processedFiles, setProcessedFiles] = useState(0);
+  const [currentFileName, setCurrentFileName] = useState('');
   const [selectedMode, setSelectedMode] = useState('CMS'); // Default to CMS
+  const [updatingCPReport, setUpdatingCPReport] = useState(false);
+  const [cpReportMessage, setCpReportMessage] = useState(null);
 
   const [allResults, setAllResults] = useState(() => {
     try {
@@ -212,6 +218,10 @@ export default function Home() {
     setUploading(true);
     setAllResults(null);
     setSelectedFiles(['All Files']);
+    setUploadProgress(0);
+    setProcessedFiles(0);
+    setTotalFiles(0);
+    setCurrentFileName('');
 
     try {
       const newResults = {};
@@ -219,7 +229,7 @@ export default function Home() {
 
       if (fileToUpload.name.toLowerCase().endsWith('.zip') || fileToUpload.type === 'application/zip' || fileToUpload.type === 'application/x-zip-compressed') {
         const zip = await JSZip.loadAsync(fileToUpload);
-        const promises = [];
+        const filesToProcess = [];
 
         zip.forEach((relativePath, zipEntry) => {
           const lowerName = zipEntry.name.toLowerCase();
@@ -229,30 +239,42 @@ export default function Home() {
             !zipEntry.name.includes('__MACOSX') &&
             !fileName.startsWith('.') &&
             (lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls'))) {
-
-            promises.push(
-              zipEntry.async('blob').then(async (blob) => {
-                const extractedFile = new File([blob], fileName, { type: 'application/octet-stream' });
-                try {
-                  const data = await processFileAPI(extractedFile, selectedMode);
-                  newResults[fileName] = data;
-                } catch (e) {
-                  console.error(`Failed to process ${fileName}`, e);
-                  newFailed.push({ name: fileName, reason: e.message });
-                }
-              })
-            );
+            filesToProcess.push({ fileName, zipEntry });
           }
         });
 
-        await Promise.all(promises);
+        setTotalFiles(filesToProcess.length);
+        let completed = 0;
+
+        // Process files sequentially to show progress
+        for (const { fileName, zipEntry } of filesToProcess) {
+          setCurrentFileName(fileName);
+          try {
+            const blob = await zipEntry.async('blob');
+            const extractedFile = new File([blob], fileName, { type: 'application/octet-stream' });
+            const data = await processFileAPI(extractedFile, selectedMode);
+            newResults[fileName] = data;
+          } catch (e) {
+            console.error(`Failed to process ${fileName}`, e);
+            newFailed.push({ name: fileName, reason: e.message });
+          }
+          completed++;
+          setProcessedFiles(completed);
+          setUploadProgress(Math.round((completed / filesToProcess.length) * 100));
+        }
       } else {
+        setTotalFiles(1);
+        setCurrentFileName(fileToUpload.name);
         try {
           const data = await processFileAPI(fileToUpload, selectedMode);
           newResults[fileToUpload.name] = data;
+          setProcessedFiles(1);
+          setUploadProgress(100);
         } catch (e) {
           console.error(`Failed to process ${fileToUpload.name}`, e);
           newFailed.push({ name: fileToUpload.name, reason: e.message });
+          setProcessedFiles(1);
+          setUploadProgress(100);
         }
       }
 
@@ -314,52 +336,180 @@ export default function Home() {
     return null;
   };
 
+  const getStationName = (data) => {
+    try {
+      if (!data || !data.info) return null;
+      let info = data.info;
+      if (typeof info === 'string') info = JSON.parse(info);
+      if (Array.isArray(info) && info.length > 0) {
+        // Try multiple possible field names for station
+        return info[0]['Station Alias Name'] || 
+               info[0]['Station Name'] || 
+               info[0]['stationName'] || 
+               info[0]['Station'] || 
+               info[0]['station_name'] || 
+               info[0]['StationName'] ||
+               info[0]['Station Identity'] ||
+               null;
+      }
+    } catch (e) {
+      console.error('Error getting station name:', e);
+      return null;
+    }
+    return null;
+  };
+
+  const getDisplayLabel = (data, fileName) => {
+    const cpId = getCPID(data);
+    const stationName = getStationName(data);
+    
+    // Debug log to see what we're getting
+    console.log('Display Label Debug:', { fileName, cpId, stationName, info: data?.info });
+    
+    if (stationName && cpId) {
+      return `${stationName} - ${cpId}`;
+    } else if (cpId) {
+      return cpId;
+    } else if (stationName) {
+      return stationName;
+    }
+    return fileName;
+  };
+
+  const handleUpdateCPReport = async () => {
+    // Create file input element
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.xlsx,.xls,.csv';
+    
+    fileInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      // Validate file type
+      const fileExt = file.name.toLowerCase().split('.').pop();
+      if (!['xlsx', 'xls', 'csv'].includes(fileExt)) {
+        setCpReportMessage({ type: 'error', text: 'Please upload .xlsx, .xls, or .csv file' });
+        setTimeout(() => setCpReportMessage(null), 5000);
+        return;
+      }
+
+      setUpdatingCPReport(true);
+      setCpReportMessage(null);
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch('http://100.86.161.51:8080/update-cp-report', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          setCpReportMessage({
+            type: 'success',
+            text: `CP Report updated successfully! ${data.statistics.total_records} records loaded.`
+          });
+        } else {
+          setCpReportMessage({
+            type: 'error',
+            text: data.detail || 'Failed to update CP report'
+          });
+        }
+      } catch (error) {
+        console.error('Error updating CP report:', error);
+        setCpReportMessage({
+          type: 'error',
+          text: 'Network error: Failed to connect to server'
+        });
+      } finally {
+        setUpdatingCPReport(false);
+        setTimeout(() => setCpReportMessage(null), 5000);
+      }
+    };
+
+    // Trigger file input click
+    fileInput.click();
+  };
+
 
   return (
     <div className="h-screen overflow-hidden">
-      <div className={`bg-white w-full h-full flex flex-col ${result ? 'p-0' : 'flex items-center justify-center p-5'}`}>
+      <div className={`bg-white w-full h-full flex flex-col ${result ? 'p-0' : 'flex items-center justify-center p-4'}`}>
         {!result && (
-          <div className="max-w-2xl w-full bg-white rounded-2xl p-12 shadow-[0_0_50px_rgba(0,0,0,0.1)] border-2 border-black animate-[slideUp_0.5s_ease-out] relative">
+          <div className="max-w-xl w-full bg-white rounded-2xl p-8 shadow-[0_0_50px_rgba(0,0,0,0.1)] border-2 border-black animate-[slideUp_0.5s_ease-out] relative">
 
             {/* Zeon Logo */}
-            <div className="flex justify-center mb-6">
-              <img src={zeonLogo} alt="Zeon Charging" className="h-16 w-auto" />
+            <div className="flex justify-center mb-4">
+              <img src={zeonLogo} alt="Zeon Charging" className="h-12 w-auto" />
             </div>
 
-            <h1 className="text-4xl font-bold text-black mb-2 text-center">Charger Health Report</h1>
-            <p className="text-base text-gray-700 text-center mb-4">Upload your Excel, CSV, or ZIP file to generate the report</p>
+            <h1 className="text-3xl font-bold text-black mb-2 text-center">Charger Health Report</h1>
+            <p className="text-sm text-gray-700 text-center mb-3">Upload your Excel, CSV, or ZIP file to generate the report</p>
 
-            {/* Source Selection Switch */}
-            <div className="flex justify-center items-center gap-4 mb-6">
-              <span className={`text-sm font-semibold transition-colors ${selectedMode === 'CMS' ? 'text-orange-600' : 'text-gray-400'}`}>
-                CMS
-              </span>
-              <button
-                onClick={() => {
-                  const newMode = selectedMode === 'CMS' ? 'S3' : 'CMS';
-                  console.log('🔄 Switching mode from', selectedMode, 'to', newMode);
-                  setSelectedMode(newMode);
-                }}
-                className={`relative w-16 h-8 rounded-full transition-all duration-300 ${selectedMode === 'S3' ? 'bg-orange-500' : 'bg-gray-300'
-                  }`}
-              >
-                <div
-                  className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-md transition-transform duration-300 ${selectedMode === 'S3' ? 'translate-x-8' : 'translate-x-0'
+            {/* Source Selection Switch and Update CP Report Button */}
+            <div className="flex flex-col items-center gap-3 mb-4">
+              <div className="flex items-center gap-3">
+                <span className={`text-xs font-semibold transition-colors ${selectedMode === 'CMS' ? 'text-orange-600' : 'text-gray-400'}`}>
+                  CMS
+                </span>
+                <button
+                  onClick={() => {
+                    const newMode = selectedMode === 'CMS' ? 'S3' : 'CMS';
+                    console.log('🔄 Switching mode from', selectedMode, 'to', newMode);
+                    setSelectedMode(newMode);
+                  }}
+                  className={`relative w-14 h-7 rounded-full transition-all duration-300 ${selectedMode === 'S3' ? 'bg-orange-500' : 'bg-gray-300'
                     }`}
-                />
-              </button>
-              <span className={`text-sm font-semibold transition-colors ${selectedMode === 'S3' ? 'text-orange-600' : 'text-gray-400'}`}>
-                S3
-              </span>
+                >
+                  <div
+                    className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-300 ${selectedMode === 'S3' ? 'translate-x-7' : 'translate-x-0'
+                      }`}
+                  />
+                </button>
+                <span className={`text-xs font-semibold transition-colors ${selectedMode === 'S3' ? 'text-orange-600' : 'text-gray-400'}`}>
+                  S3
+                </span>
+                
+                {/* Update CP Report Button */}
+                <button
+                  onClick={handleUpdateCPReport}
+                  disabled={updatingCPReport}
+                  className="ml-4 bg-blue-600 text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition-all duration-300 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  title="Update CP Report"
+                >
+                  {updatingCPReport ? (
+                    <>
+                      <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Updating...
+                    </>
+                  ) : (
+                    'Update CP Report'
+                  )}
+                </button>
+              </div>
+              
+              {/* CP Report Message */}
+              {cpReportMessage && (
+                <div className={`text-xs font-medium px-3 py-1.5 rounded-lg ${cpReportMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                  {cpReportMessage.text}
+                </div>
+              )}
             </div>
 
             {/* Mode Selection Indicator */}
-            <p className="text-sm text-center mb-6 text-orange-600 font-semibold">
+            <p className="text-xs text-center mb-4 text-orange-600 font-semibold">
               Data Source: {selectedMode}
             </p>
 
             <div
-              className={`border-3 border-dashed rounded-2xl py-12 px-6 text-center transition-all duration-300 cursor-pointer relative ${isDragging
+              className={`border-3 border-dashed rounded-2xl py-8 px-6 text-center transition-all duration-300 cursor-pointer relative ${isDragging
                 ? 'border-red-600 bg-red-50 scale-105'
                 : 'border-gray-400 bg-gray-50 hover:border-red-600 hover:bg-gray-100'
                 }`}
@@ -369,18 +519,18 @@ export default function Home() {
             >
               {!selectedFile ? (
                 <>
-                  <div className="text-red-600 mx-auto mb-4 flex justify-center">
-                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <div className="text-red-600 mx-auto mb-3 flex justify-center">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                       <polyline points="17 8 12 3 7 8" />
                       <line x1="12" y1="3" x2="12" y2="15" />
                     </svg>
                   </div>
-                  <h3 className="text-xl font-semibold text-gray-800 mb-3">Drag & Drop your file here</h3>
-                  <p className="text-gray-400 text-sm my-4 font-medium">or</p>
+                  <h3 className="text-lg font-semibold text-gray-800 mb-2">Drag & Drop your file here</h3>
+                  <p className="text-gray-400 text-xs my-3 font-medium">or</p>
                   <label
                     htmlFor="file-input"
-                    className="inline-block bg-black text-white py-3 px-8 rounded-xl font-semibold cursor-pointer transition-all duration-300 hover:bg-red-600 hover:shadow-[0_10px_25px_rgba(220,38,38,0.4)] active:translate-y-0"
+                    className="inline-block bg-black text-white py-2 px-6 rounded-xl font-semibold cursor-pointer transition-all duration-300 hover:bg-red-600 hover:shadow-[0_10px_25px_rgba(220,38,38,0.4)] active:translate-y-0 text-sm"
                   >
                     Browse Files
                   </label>
@@ -391,26 +541,26 @@ export default function Home() {
                     onChange={handleFileChange}
                     className="hidden"
                   />
-                  <p className="text-gray-400 text-sm mt-4">Supported formats: CSV, XLSX, XLS, ZIP</p>
+                  <p className="text-gray-400 text-xs mt-3">Supported formats: CSV, XLSX, XLS, ZIP</p>
                 </>
               ) : (
-                <div className="flex items-center gap-4 p-5 bg-white rounded-xl border-2 border-gray-200">
+                <div className="flex items-center gap-3 p-4 bg-white rounded-xl border-2 border-gray-200">
                   <div className="text-red-600 flex-shrink-0">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
                       <polyline points="13 2 13 9 20 9" />
                     </svg>
                   </div>
                   <div className="flex-1 text-left">
-                    <h3 className="text-base font-semibold text-gray-800 mb-1 break-all">{selectedFile.name}</h3>
-                    <p className="text-sm text-gray-600 m-0">{(selectedFile.size / 1024).toFixed(2)} KB</p>
+                    <h3 className="text-sm font-semibold text-gray-800 mb-1 break-all">{selectedFile.name}</h3>
+                    <p className="text-xs text-gray-600 m-0">{(selectedFile.size / 1024).toFixed(2)} KB</p>
                   </div>
                   <button
-                    className="bg-red-100 border-none rounded-lg w-9 h-9 flex items-center justify-center cursor-pointer transition-all duration-200 text-red-600 flex-shrink-0 hover:bg-red-400 hover:text-white hover:rotate-90 disabled:opacity-50"
+                    className="bg-red-100 border-none rounded-lg w-8 h-8 flex items-center justify-center cursor-pointer transition-all duration-200 text-red-600 flex-shrink-0 hover:bg-red-400 hover:text-white hover:rotate-90 disabled:opacity-50"
                     onClick={handleRemove}
                     disabled={uploading}
                   >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <line x1="18" y1="6" x2="6" y2="18" />
                       <line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
@@ -422,12 +572,50 @@ export default function Home() {
         )}
 
         {uploading && (
-          <div className="flex items-center justify-center gap-3 p-4 bg-gray-100 border-2 border-black rounded-xl m-5">
-            <svg className="animate-spin h-6 w-6 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span className="text-lg font-semibold text-black">Processing your file...</span>
+          <div className="max-w-xl w-full mx-auto mt-6 px-5">
+            <div className="bg-white rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.1)] border-2 border-black overflow-hidden">
+              {/* Header Section */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                  <svg className="animate-spin h-5 w-5 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-base font-bold text-black">PROCESSING DATA...</span>
+                </div>
+                <span className="text-2xl font-bold text-red-600">{uploadProgress}%</span>
+              </div>
+              
+              {/* Progress Bar Section */}
+              <div className="px-6 py-4">
+                <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden shadow-inner">
+                  <div 
+                    className="h-full bg-gradient-to-r from-red-500 to-red-600 transition-all duration-300 ease-out"
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+              </div>
+              
+              {/* File Progress Info Section */}
+              {totalFiles > 0 && (
+                <div className="px-6 pb-4 space-y-2">
+                  <p className="text-sm text-gray-700 font-medium">
+                    Processing <span className="font-bold text-black">{processedFiles}</span> of <span className="font-bold text-black">{totalFiles}</span> file{totalFiles > 1 ? 's' : ''}
+                  </p>
+                  {currentFileName && (
+                    <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+                      <p className="text-xs text-gray-500 mb-0.5">Current:</p>
+                      <p className="text-xs text-gray-800 font-medium truncate" title={currentFileName}>
+                        {currentFileName}
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-400 italic">
+                    Processing on High-Performance Cluster...
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -460,16 +648,25 @@ export default function Home() {
                         .sort()
                         .map(fileName => {
                           const data = allResults[fileName];
-                          let cpId = getCPID(data) || 'Unknown';
-                          const label = (cpId && cpId !== 'Unknown') ? cpId : fileName;
+                          const label = getDisplayLabel(data, fileName);
                           return { value: fileName, label };
                         })
                     ]}
                     selectedValues={selectedFiles}
                     onChange={setSelectedFiles}
-                    placeholder="Search CPID..."
+                    placeholder="Search Station or CPID..."
                     allLabel="All Files (Aggregated)"
                   />
+                  {/* Clear All Filter Button */}
+                  {!selectedFiles.includes('All Files') && selectedFiles.length > 0 && (
+                    <button
+                      onClick={() => setSelectedFiles(['All Files'])}
+                      className="bg-gray-600 text-white text-xs font-semibold px-3 py-1 rounded-lg whitespace-nowrap hover:bg-gray-700 transition-colors"
+                      title="Clear all filters and show aggregated view"
+                    >
+                      Clear All Filters
+                    </button>
+                  )}
                   {/* File Count Badges */}
                   <div className="flex items-center gap-2">
                     <div className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap">

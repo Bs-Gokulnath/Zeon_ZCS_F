@@ -34,14 +34,10 @@ const renderReportPage = (doc, data, title) => {
   doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100, 100, 100);
-  doc.text(`Generated: ${new Date().toLocaleString('en-US', { 
-    month: '2-digit', 
-    day: '2-digit', 
-    year: 'numeric',
-    hour: '2-digit', 
-    minute: '2-digit',
-    hour12: true 
-  })}`, 150, 12, { align: 'center' });
+  const now = new Date();
+  const generatedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+  const generatedTime = now.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  doc.text(`Generated: ${generatedDate}, ${generatedTime}`, 150, 12, { align: 'center' });
 
   // Parse and display station info - COMPACT
   let stationInfo = null;
@@ -70,15 +66,43 @@ const renderReportPage = (doc, data, title) => {
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(80, 80, 80);
     
-    // Compact 2-line format
+    // Compact format with all station details
     if (stationInfo) {
-      const stationName = stationInfo['Station Alias Name'] || 'N/A';
-      const chargePointId = stationInfo['Charge Point id'] || 'N/A';
-      const oemName = stationInfo['OEM Name'] || 'N/A';
-      const power = stationInfo['Power (kW)'] || 'N/A';
-      const firmware = stationInfo['Firmware Version'] || 'N/A';
+      // Extract all possible fields - matching API column names
+      const city = stationInfo['Location name/Station name'] || 
+                   stationInfo['City'] || 
+                   stationInfo['city'] || 
+                   stationInfo['Location'] || '';
       
-      doc.text(`${stationName} | CP: ${chargePointId} | OEM: ${oemName} | ${power}kW | FW: ${firmware}`, 150, currentY, { align: 'center' });
+      const stationName = stationInfo['Station Alias Name'] || 
+                         stationInfo['Station Name'] || 
+                         stationInfo['stationName'] || 'N/A';
+      
+      const chargePointId = stationInfo['Charge Point id'] || 
+                           stationInfo['Charge Point Id'] || 
+                           stationInfo['chargePointId'] || 'N/A';
+      
+      const oemName = stationInfo['OEM Name'] || 
+                     stationInfo['OEM'] || 
+                     stationInfo['oem_name'] || 'N/A';
+      
+      const power = stationInfo['Power (kW)'] || 
+                   stationInfo['Power'] || 
+                   stationInfo['power'] || 'N/A';
+      
+      const firmware = stationInfo['Firmware Version'] || 
+                      stationInfo['Firmware'] || 
+                      stationInfo['firmware'] || 'N/A';
+      
+      // Build the info line with city if available
+      let infoLine = '';
+      if (city) {
+        infoLine = `${city} | ${stationName} | CP: ${chargePointId} | OEM: ${oemName} | ${power}kW | FW: ${firmware}`;
+      } else {
+        infoLine = `${stationName} | CP: ${chargePointId} | OEM: ${oemName} | ${power}kW | FW: ${firmware}`;
+      }
+      
+      doc.text(infoLine, 150, currentY, { align: 'center' });
       currentY += 3;
     }
     
@@ -102,7 +126,7 @@ const renderReportPage = (doc, data, title) => {
   const combinedFailed = (report1['Failed / Error Stops'] || 0) + (report2['Failed / Error Stops'] || 0);
   const combinedSuccessRate = combinedCharging > 0 
     ? `${Math.round((combinedSuccessful / combinedCharging) * 100)}% (${combinedSuccessful} / ${combinedCharging})` 
-    : '0%';
+    : 'No Attempts';
 
   // Count Precharging Failures from raw connector data
   const connector1PrechargingFailure = countPrechargingFailures(data.Connector1);
@@ -378,14 +402,15 @@ const renderReportPage = (doc, data, title) => {
  
    // PROMINENT SUCCESS RATE DISPLAY
    const combinedSuccessRateVal = combinedCharging > 0 ? Math.round((combinedSuccessful / combinedCharging) * 100) : 0;
-   doc.setFillColor(combinedSuccessRateVal > 60 ? 240 : 255, combinedSuccessRateVal > 60 ? 255 : 240, combinedSuccessRateVal > 60 ? 240 : 240);
+   const hasAttempts = combinedCharging > 0;
+   doc.setFillColor(hasAttempts ? (combinedSuccessRateVal > 60 ? 240 : 255) : 245, hasAttempts ? (combinedSuccessRateVal > 60 ? 255 : 240) : 245, hasAttempts ? (combinedSuccessRateVal > 60 ? 240 : 240) : 245);
    doc.rect(col1X, yPos, colWidth, 8, 'F');
    doc.setDrawColor(...darkBg);
    doc.rect(col1X, yPos, colWidth, 8, 'S');
    
    doc.setFontSize(8);
    doc.setFont('helvetica', 'bold');
-   doc.setTextColor(combinedSuccessRateVal > 60 ? 0 : 220, combinedSuccessRateVal > 60 ? 128 : 38, combinedSuccessRateVal > 60 ? 0 : 38);
+   doc.setTextColor(hasAttempts ? (combinedSuccessRateVal > 60 ? 0 : 220) : 100, hasAttempts ? (combinedSuccessRateVal > 60 ? 128 : 38) : 100, hasAttempts ? (combinedSuccessRateVal > 60 ? 0 : 38) : 100);
    doc.text(`Success Rate: ${combinedSuccessRate}`, col1X + colWidth/2, yPos + 5.5, { align: 'center' });
    
    doc.setTextColor(...textColor); // Reset
@@ -491,17 +516,18 @@ const renderReportPage = (doc, data, title) => {
     const successful = report.data['Successful Sessions'] || 0;
     const total = report.data['Charging Sessions'] || 0;
     const successRateVal = total > 0 ? Math.round((successful / total) * 100) : 0;
-    const successRate = total > 0 ? `${successRateVal}% (${successful} / ${total})` : '0%';
+    const successRate = total > 0 ? `${successRateVal}% (${successful} / ${total})` : 'No Attempts';
+    const hasAttempts = total > 0;
 
     // PROMINENT SUCCESS RATE DISPLAY (INDIVIDUAL)
-    doc.setFillColor(successRateVal > 60 ? 240 : 255, successRateVal > 60 ? 255 : 240, successRateVal > 60 ? 240 : 240);
+    doc.setFillColor(hasAttempts ? (successRateVal > 60 ? 240 : 255) : 245, hasAttempts ? (successRateVal > 60 ? 255 : 240) : 245, hasAttempts ? (successRateVal > 60 ? 240 : 240) : 245);
     doc.rect(report.colX, connectorY, colWidth, 8, 'F');
     doc.setDrawColor(...darkBg);
     doc.rect(report.colX, connectorY, colWidth, 8, 'S');
 
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(successRateVal > 60 ? 0 : 220, successRateVal > 60 ? 128 : 38, successRateVal > 60 ? 0 : 38);
+    doc.setTextColor(hasAttempts ? (successRateVal > 60 ? 0 : 220) : 100, hasAttempts ? (successRateVal > 60 ? 128 : 38) : 100, hasAttempts ? (successRateVal > 60 ? 0 : 38) : 100);
     doc.text(`Success Rate: ${successRate}`, report.colX + colWidth/2, connectorY + 5.5, { align: 'center' });
 
     doc.setTextColor(...textColor); // Reset

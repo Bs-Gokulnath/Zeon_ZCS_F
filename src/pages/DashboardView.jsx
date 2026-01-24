@@ -263,27 +263,36 @@ const processNetworkPerformance = (allResults) => {
     let grandTotal = 0;
     let grandNegative = 0;
 
-    // Iterate over all files in allResults, ignoring "All Files" key if it exists as a duplicate aggregate
-    // But usually 'allResults' keys are filenames.
-    // If 'allResults' is passed from home.jsx, make sure we don't double count.
-
+    // Iterate over all files in allResults
     Object.entries(allResults).forEach(([key, data]) => {
-        // Skip if key is 'All Files' or similar meta-key if present (user logic might vary, but key is usually filename)
+        // Skip if key is 'All Files'
         if (key === 'All Files') return;
 
-        // 1. Extract OEM
+        // 1. Extract OEM (Make) with better field checking
         let oem = 'Unknown';
         try {
             if (data.info) {
                 let info = data.info;
                 if (typeof info === 'string') info = JSON.parse(info);
                 if (Array.isArray(info) && info.length > 0) {
-                    oem = info[0]['OEM Name'] || info[0]['Station Alias Name'] || 'Unknown';
+                    // Try multiple field names for OEM
+                    oem = info[0]['OEM Name'] || 
+                          info[0]['OEM'] || 
+                          info[0]['Make'] || 
+                          info[0]['Manufacturer'] ||
+                          info[0]['oem_name'] ||
+                          'Unknown';
                 }
             }
-        } catch (e) { }
-        oem = String(oem).toUpperCase().trim();
-        if (!oem) oem = 'UNKNOWN';
+        } catch (e) { 
+            console.error('Error extracting OEM:', e);
+        }
+        
+        // Clean and normalize OEM name
+        oem = String(oem).trim();
+        if (!oem || oem === 'Unknown' || oem === '') {
+            oem = 'UNKNOWN';
+        }
 
         // 2. Extract Counts
         const t1 = (data.report_1?.['Charging Sessions'] || 0);
@@ -299,16 +308,17 @@ const processNetworkPerformance = (allResults) => {
         grandNegative += n1 + n2;
     });
 
+    // Create chart data from OEM stats
     const chartData = Object.entries(stats).map(([name, { total, negative }]) => ({
         name,
         value: total > 0 ? Math.round((negative / total) * 100) : 0,
         fill: '#C2410C' // Orange-700
     }));
 
-    // Sort Alphabetically
-    chartData.sort((a, b) => a.name.localeCompare(b.name));
+    // Sort by value (highest negative stop % first)
+    chartData.sort((a, b) => b.value - a.value);
 
-    // Add Overall
+    // Add Overall at the end
     const overallVal = grandTotal > 0 ? Math.round((grandNegative / grandTotal) * 100) : 0;
     chartData.push({ name: 'OVERALL', value: overallVal, fill: '#9A3412' }); // Darker Orange/Brown
 
@@ -367,6 +377,17 @@ const SearchableSelect = ({ options, value, onChange, label, icon: Icon, prefix 
                             className="w-full text-xs p-1.5 border border-gray-200 rounded bg-white outline-none focus:border-blue-500"
                         />
                     </div>
+                    {/* Clear Filter Option */}
+                    {value !== 'All' && value !== 'All Files' && (
+                        <div className="px-2 py-1 border-b border-gray-200 bg-gray-50">
+                            <button
+                                onClick={() => { onChange('All'); setIsOpen(false); }}
+                                className="w-full text-left px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded font-semibold transition-colors"
+                            >
+                                ✕ Clear Filter
+                            </button>
+                        </div>
+                    )}
                     <div className="overflow-y-auto flex-1 p-1">
                         {filteredOptions.length > 0 ? filteredOptions.map(opt => (
                             <button
@@ -413,11 +434,37 @@ const getStationName = (data) => {
             let info = data.info;
             if (typeof info === 'string') info = JSON.parse(info);
             if (Array.isArray(info) && info.length > 0) {
-                return info[0]['Station Name'] || info[0]['Station Alias Name'] || info[0]['Station Identity'] || 'Unknown';
+                return info[0]['Station Name'] || 
+                       info[0]['Station Alias Name'] || 
+                       info[0]['Station Identity'] || 
+                       info[0]['station_name'] ||
+                       info[0]['StationName'] ||
+                       info[0]['Station'] ||
+                       null;
             }
         }
-    } catch (e) { }
-    return 'Unknown';
+    } catch (e) { 
+        console.error('Error getting station name:', e);
+    }
+    return null;
+};
+
+// Helper: Get Display Label (Station Name - CPID)
+const getDisplayLabel = (data, fileName) => {
+    const cpId = getChargePointID(data);
+    const stationName = getStationName(data);
+    
+    // Debug log
+    console.log('Dashboard Display Label:', { fileName, cpId, stationName, info: data?.info });
+    
+    if (stationName && cpId && cpId !== 'Unknown') {
+        return `${stationName} - ${cpId}`;
+    } else if (cpId && cpId !== 'Unknown') {
+        return cpId;
+    } else if (stationName) {
+        return stationName;
+    }
+    return fileName;
 };
 
 // Helper: Aggregate Results
@@ -558,8 +605,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
         { value: 'All Files', label: 'All Files' },
         ...filters.map(f => {
             const data = allResults[f];
-            const cpid = getChargePointID(data);
-            const displayLabel = cpid !== 'Unknown' ? cpid : f;
+            const displayLabel = getDisplayLabel(data, f);
             return { value: f, label: displayLabel };
         })
     ];
@@ -647,7 +693,23 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                             options={fileOptions}
                             selectedValues={selectedFiles}
                             onChange={handleFileFilterChange}
+                            placeholder="Search Station or CPID..."
                         />
+                    )}
+
+                    {/* Clear All Filters Button */}
+                    {(!selectedFiles.includes('All Files') || selectedStation !== 'All' || selectedCpId !== 'All') && (
+                        <button
+                            onClick={() => {
+                                setSelectedFiles(['All Files']);
+                                setSelectedStation('All');
+                                setSelectedCpId('All');
+                            }}
+                            className="bg-gray-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap hover:bg-gray-700 transition-colors"
+                            title="Clear all filters and show all data"
+                        >
+                            Clear All Filters
+                        </button>
                     )}
 
                     <button
