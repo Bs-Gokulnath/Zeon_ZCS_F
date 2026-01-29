@@ -860,6 +860,231 @@ const renderReportPage = (doc, data, title) => {
   doc.setPage(maxPageReached);
 };
 
+// Helper function to render combined summary page (first page)
+const renderCombinedSummaryPage = (doc, data, title) => {
+  const darkBg = [45, 45, 45];
+  const textColor = [30, 30, 30];
+  const whiteText = [255, 255, 255];
+
+  // Header
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...textColor);
+  doc.text(title || 'Charger Health Report - Combined Summary', 150, 15, { align: 'center' });
+  
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 100, 100);
+  const now = new Date();
+  const generatedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+  const generatedTime = now.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  doc.text(`Generated: ${generatedDate}, ${generatedTime}`, 150, 22, { align: 'center' });
+
+  // Parse station info
+  let stationInfo = null;
+  try {
+    if (data.info) {
+      if (typeof data.info === 'string') {
+        const parsed = JSON.parse(data.info);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          stationInfo = parsed[0];
+        }
+      } else if (Array.isArray(data.info) && data.info.length > 0) {
+        stationInfo = data.info[0];
+      }
+    }
+  } catch (e) {
+    console.error('Error parsing station info:', e);
+  }
+
+  let currentY = 25;
+  
+  if (stationInfo || data.date) {
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 80, 80);
+    
+    if (stationInfo) {
+      const city = stationInfo['Location name/Station name'] || stationInfo['City'] || '';
+      const stationName = stationInfo['Station Alias Name'] || stationInfo['Station Name'] || 'N/A';
+      const chargePointId = stationInfo['Charge Point id'] || stationInfo['Charge Point Id'] || 'N/A';
+      const oemName = stationInfo['OEM Name'] || stationInfo['OEM'] || 'N/A';
+      const power = stationInfo['Power (kW)'] || stationInfo['Power'] || 'N/A';
+      const firmware = stationInfo['Firmware Version'] || stationInfo['Firmware'] || 'N/A';
+      
+      let infoLine = city ? `${city} | ${stationName} | CP: ${chargePointId} | OEM: ${oemName} | ${power}kW | FW: ${firmware}` 
+                          : `${stationName} | CP: ${chargePointId} | OEM: ${oemName} | ${power}kW | FW: ${firmware}`;
+      
+      doc.text(infoLine, 150, currentY, { align: 'center' });
+      currentY += 4;
+    }
+    
+    if (data.date && (data.date.start_date || data.date.end_date)) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Period: ${data.date.start_date || 'N/A'} - ${data.date.end_date || 'N/A'}`, 150, currentY, { align: 'center' });
+      currentY += 6;
+    }
+  }
+
+  // Calculate combined metrics
+  const report1 = data.report_1 || {};
+  const report2 = data.report_2 || {};
+
+  const combinedPreparing = (report1['Preparing Sessions'] || 0) + (report2['Preparing Sessions'] || 0);
+  const combinedCharging = (report1['Charging Sessions'] || 0) + (report2['Charging Sessions'] || 0);
+  const combinedSuccessful = (report1['Successful Sessions'] || 0) + (report2['Successful Sessions'] || 0);
+  const combinedFailed = (report1['Failed / Error Stops'] || 0) + (report2['Failed / Error Stops'] || 0);
+  const combinedSuccessRate = combinedCharging > 0 
+    ? `${Math.round((combinedSuccessful / combinedCharging) * 100)}% (${combinedSuccessful} / ${combinedCharging})` 
+    : 'No Attempts';
+
+  const connector1PrechargingFailure = countPrechargingFailures(data.Connector1);
+  const connector2PrechargingFailure = countPrechargingFailures(data.Connector2);
+  const combinedPrechargingFailure = connector1PrechargingFailure + connector2PrechargingFailure;
+
+  const combinedRemoteStart = (report1['Remote Start'] || 0) + (report2['Remote Start'] || 0);
+  const combinedAutoStart = (report1['Auto Start'] || 0) + (report2['Auto Start'] || 0);
+  const combinedRfidStart = (report1['RFID Start'] || 0) + (report2['RFID Start'] || 0);
+
+  // Calculate power metrics
+  const getVal = (row, ...keys) => {
+    for (const k of keys) {
+      const foundKey = Object.keys(row).find(rk => rk.toLowerCase().trim() === k.toLowerCase().trim());
+      if (foundKey) return row[foundKey];
+    }
+    return 0;
+  };
+  
+  const calculateConnectorMetrics = (rows) => {
+    if (!Array.isArray(rows) || rows.length === 0) return { peak: 0, avg: 0 };
+    let maxPeak = 0, totalEnergy = 0, totalDurationHours = 0;
+    rows.forEach(row => {
+      const peak = parseFloat(getVal(row, 'Session Peak Power (kW)', 'Peak Power (kW)', 'Peak Power') || 0);
+      if (!isNaN(peak) && peak > maxPeak) maxPeak = peak;
+      const energy = parseFloat(getVal(row, 'Session Energy Delivered (kWh)', 'Energy Mode (kWh)', 'Energy (kWh)') || 0);
+      if (!isNaN(energy)) totalEnergy += energy;
+      let durationRaw = getVal(row, 'Session Duration', 'Duration', 'Charging Time');
+      let hours = 0;
+      if (durationRaw) {
+        if (typeof durationRaw === 'number') hours = durationRaw / 60;
+        else if (typeof durationRaw === 'string') {
+          const parts = durationRaw.split(':').map(Number);
+          if (parts.length === 3) hours = parts[0] + parts[1]/60 + parts[2]/3600;
+          else if (parts.length === 2) hours = parts[0]/60 + parts[1]/3600;
+        }
+      }
+      totalDurationHours += hours;
+    });
+    return { peak: maxPeak, avg: totalDurationHours > 0 ? totalEnergy / totalDurationHours : 0 };
+  };
+
+  const metrics1 = calculateConnectorMetrics(data.Connector1);
+  const metrics2 = calculateConnectorMetrics(data.Connector2);
+  const peak1 = metrics1.peak > 0 ? metrics1.peak : (report1['Peak Power Delivered (kW)'] || 0);
+  const peak2 = metrics2.peak > 0 ? metrics2.peak : (report2['Peak Power Delivered (kW)'] || 0);
+  const combinedPeakPower = Math.max(peak1, peak2);
+  const combinedAvgPower = metrics1.avg > 0 || metrics2.avg > 0 
+    ? (metrics1.avg + metrics2.avg) / ((metrics1.avg > 0 ? 1 : 0) + (metrics2.avg > 0 ? 1 : 0))
+    : 0;
+
+  // Success rate display
+  const combinedSuccessRateVal = combinedCharging > 0 ? Math.round((combinedSuccessful / combinedCharging) * 100) : 0;
+  const hasAttempts = combinedCharging > 0;
+  
+  doc.setFillColor(hasAttempts ? (combinedSuccessRateVal > 60 ? 220 : 255) : 245, 
+                   hasAttempts ? (combinedSuccessRateVal > 60 ? 255 : 220) : 245, 
+                   hasAttempts ? (combinedSuccessRateVal > 60 ? 220 : 220) : 245);
+  doc.rect(100, currentY, 100, 15, 'F');
+  doc.setDrawColor(...darkBg);
+  doc.rect(100, currentY, 100, 15, 'S');
+  
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(hasAttempts ? (combinedSuccessRateVal > 60 ? 0 : 200) : 100, 
+                   hasAttempts ? (combinedSuccessRateVal > 60 ? 100 : 38) : 100, 
+                   hasAttempts ? (combinedSuccessRateVal > 60 ? 0 : 38) : 100);
+  doc.text(`Overall Success Rate: ${combinedSuccessRate}`, 150, currentY + 10, { align: 'center' });
+  
+  currentY += 20;
+
+  // Section 1: Charger Usage & Readiness
+  doc.setFillColor(...darkBg);
+  doc.rect(20, currentY, 260, 8, 'F');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...whiteText);
+  doc.text('1. Charger Usage & Readiness', 25, currentY + 5.5);
+  currentY += 10;
+
+  autoTable(doc, {
+    startY: currentY,
+    head: [['Metric', 'Count']],
+    body: [
+      ['Preparing', combinedPreparing],
+      ['Precharging Failure', combinedPrechargingFailure],
+      ['Charging Sessions', combinedCharging],
+      ['Positive Stops', combinedSuccessful],
+      ['Negative Stops (Errors)', combinedFailed],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 9, fontStyle: 'bold', halign: 'center' },
+    bodyStyles: { fontSize: 9, textColor: textColor },
+    columnStyles: { 0: { cellWidth: 180, halign: 'left' }, 1: { cellWidth: 80, halign: 'center' } },
+    margin: { left: 20, right: 20 },
+  });
+
+  currentY = doc.lastAutoTable.finalY + 8;
+
+  // Section 2: Authentication Method
+  doc.setFillColor(...darkBg);
+  doc.rect(20, currentY, 260, 8, 'F');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...whiteText);
+  doc.text('2. Authentication Method', 25, currentY + 5.5);
+  currentY += 10;
+
+  autoTable(doc, {
+    startY: currentY,
+    head: [['Start Type', 'Accepted']],
+    body: [
+      ['Remote Start', combinedRemoteStart],
+      ['Auto Charge', combinedAutoStart],
+      ['RFID', combinedRfidStart],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 9, fontStyle: 'bold', halign: 'center' },
+    bodyStyles: { fontSize: 9, textColor: textColor },
+    columnStyles: { 0: { cellWidth: 180, halign: 'left' }, 1: { cellWidth: 80, halign: 'center' } },
+    margin: { left: 20, right: 20 },
+  });
+
+  currentY = doc.lastAutoTable.finalY + 8;
+
+  // Section 3: Power & Charging Quality
+  doc.setFillColor(...darkBg);
+  doc.rect(20, currentY, 260, 8, 'F');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...whiteText);
+  doc.text('3. Power & Charging Quality', 25, currentY + 5.5);
+  currentY += 10;
+
+  autoTable(doc, {
+    startY: currentY,
+    head: [['Metric', 'Value']],
+    body: [
+      ['Peak Power (kW)', combinedPeakPower.toFixed(2)],
+      ['Avg Power (kW)', combinedAvgPower.toFixed(2)],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 9, fontStyle: 'bold', halign: 'center' },
+    bodyStyles: { fontSize: 9, textColor: textColor },
+    columnStyles: { 0: { cellWidth: 180, halign: 'left' }, 1: { cellWidth: 80, halign: 'center' } },
+    margin: { left: 20, right: 20 },
+  });
+};
+
 export const generateChargerHealthPDF = (data, filename = "Charger_Health_Report") => {
   console.log('PDF Generator - Data received:', data);
   
@@ -878,10 +1103,18 @@ export const generateChargerHealthPDF = (data, filename = "Charger_Health_Report
 
      keys.forEach((key, index) => {
         if (index > 0) doc.addPage();
+        // First page: Combined summary
+        renderCombinedSummaryPage(doc, data[key], `${key} - Combined Summary`);
+        // Subsequent pages: Individual connector details
+        doc.addPage();
         renderReportPage(doc, data[key], key);
      });
   } else {
      const title = filename !== 'Combined_Report' && filename !== 'Charger_Health_Report' ? filename : 'Charger Health Report';
+     // First page: Combined summary
+     renderCombinedSummaryPage(doc, data, `${title} - Combined Summary`);
+     // Second page onwards: Individual connector details
+     doc.addPage();
      renderReportPage(doc, data, title);
   }
 

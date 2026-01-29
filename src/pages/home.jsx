@@ -401,7 +401,7 @@ export default function Home() {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch('http://100.86.161.51:8080/update-cp-report', {
+        const response = await fetch('/api/update-cp-report', {
           method: 'POST',
           body: formData,
         });
