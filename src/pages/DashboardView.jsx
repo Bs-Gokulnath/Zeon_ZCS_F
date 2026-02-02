@@ -77,11 +77,48 @@ const FunnelSection = ({ preparing, charging, negative, successful }) => {
     const rate = totalForRate > 0 ? Math.round((successful / totalForRate) * 100) : 0;
     const isGood = rate >= 70;
 
+    // Calculate total for percentage calculation
+    const total = preparing + charging + negative;
+
     const data = [
-        { name: 'Preparing', value: preparing, fill: COLORS.blue },
-        { name: 'Charging', value: charging, fill: COLORS.green },
-        { name: 'Negative Stops', value: negative, fill: COLORS.red },
+        { 
+            name: 'Preparing', 
+            value: preparing, 
+            fill: COLORS.blue,
+            percentage: total > 0 ? Math.round((preparing / total) * 100) : 0
+        },
+        { 
+            name: 'Charging', 
+            value: charging, 
+            fill: COLORS.green,
+            percentage: total > 0 ? Math.round((charging / total) * 100) : 0
+        },
+        { 
+            name: 'Negative Stops', 
+            value: negative, 
+            fill: COLORS.red,
+            percentage: total > 0 ? Math.round((negative / total) * 100) : 0
+        },
     ].sort((a, b) => b.value - a.value);
+
+    // Custom label renderer to show value and percentage
+    const renderCenterLabel = (props) => {
+        const { x, y, width, height, index } = props;
+        const entry = data[index];
+        return (
+            <text 
+                x={x + width / 2} 
+                y={y + height / 2} 
+                fill="#fff" 
+                textAnchor="middle" 
+                dominantBaseline="middle"
+                fontSize={12}
+                fontWeight="bold"
+            >
+                {`${entry.value} (${entry.percentage}%)`}
+            </text>
+        );
+    };
 
     return (
         <div className="flex flex-col h-full">
@@ -95,7 +132,7 @@ const FunnelSection = ({ preparing, charging, negative, successful }) => {
                             isAnimationActive
                         >
                             <LabelList position="right" fill="#4B5563" stroke="none" dataKey="name" fontSize={10} />
-                            <LabelList position="center" fill="#fff" stroke="none" dataKey="value" fontSize={12} fontWeight="bold" />
+                            <LabelList position="center" content={renderCenterLabel} />
                         </Funnel>
                     </FunnelChart>
                 </ResponsiveContainer>
@@ -257,9 +294,10 @@ const processErrorBreakdown = (result) => {
 
 // Process Network Performance (Negative Stop %)
 const processNetworkPerformance = (allResults) => {
-    if (!allResults || Object.keys(allResults).length === 0) return [];
+    if (!allResults || Object.keys(allResults).length === 0) return { chartData: [], oemMapping: {} };
 
     const stats = {};
+    const oemMapping = {}; // Maps OEM name to file keys
     let grandTotal = 0;
     let grandNegative = 0;
 
@@ -300,9 +338,13 @@ const processNetworkPerformance = (allResults) => {
         const t2 = (data.report_2?.['Charging Sessions'] || 0);
         const n2 = (data.report_2?.['Failed / Error Stops'] || 0);
 
-        if (!stats[oem]) stats[oem] = { total: 0, negative: 0 };
+        if (!stats[oem]) {
+            stats[oem] = { total: 0, negative: 0 };
+            oemMapping[oem] = [];
+        }
         stats[oem].total += t1 + t2;
         stats[oem].negative += n1 + n2;
+        oemMapping[oem].push(key); // Store file key for this OEM
 
         grandTotal += t1 + t2;
         grandNegative += n1 + n2;
@@ -322,7 +364,7 @@ const processNetworkPerformance = (allResults) => {
     const overallVal = grandTotal > 0 ? Math.round((grandNegative / grandTotal) * 100) : 0;
     chartData.push({ name: 'OVERALL', value: overallVal, fill: '#9A3412' }); // Darker Orange/Brown
 
-    return chartData;
+    return { chartData, oemMapping };
 };
 
 
@@ -526,6 +568,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
     // State
     const [selectedCpId, setSelectedCpId] = useState('All');
     const [selectedStation, setSelectedStation] = useState('All');
+    const [selectedOEM, setSelectedOEM] = useState(null); // For OEM filtering from Network Performance chart
 
     // Grouping Logic
     const groupedResults = useMemo(() => {
@@ -554,6 +597,17 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
 
     // Determine Active Result
     const activeResult = useMemo(() => {
+        // 0. OEM Filter (Highest priority - from Network Performance chart)
+        if (selectedOEM && selectedOEM !== 'OVERALL') {
+            const networkPerf = processNetworkPerformance(allResults);
+            const filesForOEM = networkPerf.oemMapping[selectedOEM] || [];
+            if (filesForOEM.length === 1) {
+                return allResults[filesForOEM[0]] || result;
+            } else if (filesForOEM.length > 1) {
+                return aggregateData(filesForOEM.map(f => allResults[f]).filter(Boolean));
+            }
+        }
+
         // 1. Specific Files (Takes priority if selected)
         if (selectedFiles && selectedFiles.length > 0 && !selectedFiles.includes('All Files')) {
             if (selectedFiles.length === 1) {
@@ -571,25 +625,40 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
         }
         // 4. Default Globals
         return result;
-    }, [selectedFiles, selectedCpId, selectedStation, groupedResults, result, allResults]);
+    }, [selectedFiles, selectedCpId, selectedStation, selectedOEM, groupedResults, result, allResults]);
 
     // Handlers
     const handleFileFilterChange = (vals) => {
         setSelectedFiles(vals);
         setSelectedCpId('All');
         setSelectedStation('All');
+        setSelectedOEM(null);
     };
 
     const handleCpIdChange = (val) => {
         setSelectedCpId(val);
         setSelectedFiles(['All Files']);
         setSelectedStation('All');
+        setSelectedOEM(null);
     };
 
     const handleStationChange = (val) => {
         setSelectedStation(val);
         setSelectedCpId('All');
         setSelectedFiles(['All Files']);
+        setSelectedOEM(null);
+    };
+
+    const handleOEMClick = (oemName) => {
+        if (oemName === 'OVERALL' || oemName === selectedOEM) {
+            setSelectedOEM(null);
+        } else {
+            setSelectedOEM(oemName);
+            // Clear other filters when OEM is selected
+            setSelectedFiles(['All Files']);
+            setSelectedCpId('All');
+            setSelectedStation('All');
+        }
     };
 
     // Options for Filters
@@ -631,23 +700,53 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
         }
     };
 
-    const pieData = [
+    const pieDataRaw = [
         { name: 'Remote', value: (activeResult?.report_1?.['Remote Start'] || 0) + (activeResult?.report_2?.['Remote Start'] || 0) },
         { name: 'Auto', value: (activeResult?.report_1?.['Auto Start'] || 0) + (activeResult?.report_2?.['Auto Start'] || 0) },
         { name: 'RFID', value: (activeResult?.report_1?.['RFID Start'] || 0) + (activeResult?.report_2?.['RFID Start'] || 0) }
     ].filter(d => d.value > 0);
-    const pieTotal = pieData.reduce((acc, curr) => acc + curr.value, 0);
+    const pieTotal = pieDataRaw.reduce((acc, curr) => acc + curr.value, 0);
+    const pieData = pieDataRaw.map(d => ({
+        ...d,
+        percentage: pieTotal > 0 ? Math.round((d.value / pieTotal) * 100) : 0
+    }));
 
     // Error Data
-    const errorData = processErrorBreakdown(activeResult);
-    const errorTotal = errorData.reduce((acc, curr) => acc + curr.value, 0);
+    const errorDataRaw = processErrorBreakdown(activeResult);
+    const errorTotal = errorDataRaw.reduce((acc, curr) => acc + curr.value, 0);
+    const errorData = errorDataRaw.map(d => ({
+        ...d,
+        percentage: errorTotal > 0 ? Math.round((d.value / errorTotal) * 100) : 0
+    }));
     const ERROR_COLORS = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#6366F1'];
+
+    // Pre-Charging Failure Breakdown Data
+    const preChargingFailure = funnelData.combined.preparing - funnelData.combined.charging; // Sessions that didn't make it to charging
+    const negativeStops = funnelData.combined.negative;
+    const positiveStops = funnelData.combined.successful;
+    
+    const preChargingDataRaw = [
+        { name: 'Pre-Charging Failure', value: preChargingFailure > 0 ? preChargingFailure : 0 },
+        { name: 'Negative Stops', value: negativeStops },
+        { name: 'Positive Stops', value: positiveStops }
+    ].filter(d => d.value > 0);
+    const preChargingTotal = preChargingDataRaw.reduce((acc, curr) => acc + curr.value, 0);
+    const preChargingData = preChargingDataRaw.map(d => ({
+        ...d,
+        percentage: preChargingTotal > 0 ? Math.round((d.value / preChargingTotal) * 100) : 0
+    }));
+    const PRECHARGING_COLORS = ['#EF4444', '#F59E0B', '#10B981']; // Red, Orange, Green
 
     // Dynamic Daily Line Data
     const lineData = processSessionTrend(activeResult);
 
     // Network Performance Data (Global)
-    const networkData = processNetworkPerformance(allResults);
+    const networkPerformance = processNetworkPerformance(allResults);
+    const networkData = networkPerformance.chartData.map(item => ({
+        ...item,
+        fill: selectedOEM === item.name ? '#DC2626' : (selectedOEM ? '#D1D5DB' : item.fill), // Bright red for selected, gray for others when filtered
+        opacity: selectedOEM === item.name ? 1 : (selectedOEM ? 0.4 : 1)
+    }));
 
     return (
         <motion.div
@@ -698,17 +797,18 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                     )}
 
                     {/* Clear All Filters Button */}
-                    {(!selectedFiles.includes('All Files') || selectedStation !== 'All' || selectedCpId !== 'All') && (
+                    {(!selectedFiles.includes('All Files') || selectedStation !== 'All' || selectedCpId !== 'All' || selectedOEM) && (
                         <button
                             onClick={() => {
                                 setSelectedFiles(['All Files']);
                                 setSelectedStation('All');
                                 setSelectedCpId('All');
+                                setSelectedOEM(null);
                             }}
                             className="bg-gray-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap hover:bg-gray-700 transition-colors"
                             title="Clear all filters and show all data"
                         >
-                            Clear All Filters
+                            Clear All Filters {selectedOEM && `(OEM: ${selectedOEM})`}
                         </button>
                     )}
 
@@ -730,144 +830,210 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                 </div>
             </div>
 
-            {/* Main Content - Fixed Layout */}
-            <div className="flex-1 p-3 overflow-hidden min-h-0 bg-gray-100 grid grid-rows-[45%_1fr] gap-3">
-
-                {/* Row 1: Funnels (3 cols) + Network Performance (1 col) */}
-                <div className="grid grid-cols-4 gap-3 min-h-0 h-full">
-                    <DashboardCard title="Charger Usage & Readiness" borderColorClass="border-blue-600" icon={Zap} className="col-span-3">
-                        <div className="grid grid-cols-3 gap-0 h-full">
-                            <div className="h-full px-2 border-r border-gray-200 flex flex-col pt-2">
-                                <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Combined Charger</h4>
-                                <div className="flex-1 min-h-0"><FunnelSection {...funnelData.combined} /></div>
+            {/* Main Content - Scrollable Layout */}
+            <div className="flex-1 p-3 overflow-y-auto bg-gray-100">
+                <div className="flex flex-col gap-3">
+                    {/* Row 1: Charger Usage (3 cols) + Charging Shares (1 col) */}
+                    <div className="grid grid-cols-4 gap-3 h-[280px]">
+                        <DashboardCard title="Charger Usage & Readiness" borderColorClass="border-blue-600" icon={Zap} className="col-span-3">
+                            <div className="grid grid-cols-3 gap-0 h-full">
+                                <div className="h-full px-2 border-r border-gray-200 flex flex-col pt-2">
+                                    <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Combined Charger</h4>
+                                    <div className="flex-1 min-h-0"><FunnelSection {...funnelData.combined} /></div>
+                                </div>
+                                <div className="h-full px-2 border-r border-gray-200 flex flex-col pt-2">
+                                    <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Connector 1</h4>
+                                    <div className="flex-1 min-h-0"><FunnelSection {...funnelData.c1} /></div>
+                                </div>
+                                <div className="h-full px-2 flex flex-col pt-2">
+                                    <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Connector 2</h4>
+                                    <div className="flex-1 min-h-0"><FunnelSection {...funnelData.c2} /></div>
+                                </div>
                             </div>
-                            <div className="h-full px-2 border-r border-gray-200 flex flex-col pt-2">
-                                <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Connector 1</h4>
-                                <div className="flex-1 min-h-0"><FunnelSection {...funnelData.c1} /></div>
-                            </div>
-                            <div className="h-full px-2 flex flex-col pt-2">
-                                <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Connector 2</h4>
-                                <div className="flex-1 min-h-0"><FunnelSection {...funnelData.c2} /></div>
-                            </div>
-                        </div>
-                    </DashboardCard>
+                        </DashboardCard>
 
-                    {/* Network Performance Bar Chart - Moved to Row 1 Col 4 */}
-                    <DashboardCard title="Network Performance (Neg Stop%)" borderColorClass="border-amber-700" icon={Layers} className="col-span-1">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={networkData} margin={{ top: 20, right: 10, left: 0, bottom: 20 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                                <XAxis
-                                    dataKey="name"
-                                    tick={{ fontSize: 9, fontWeight: 'bold' }}
-                                    axisLine={false}
-                                    tickLine={false}
-                                    dy={10}
-                                    interval={0} // Show all labels
-                                    angle={-45} // Angle if crowded
-                                    textAnchor="end"
-                                />
-                                <YAxis hide />
-                                <Tooltip cursor={{ fill: '#f3f4f6' }} content={<CustomTooltip />} />
-                                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                                    {/* Inside Top Label */}
-                                    <LabelList dataKey="value" position="top" fill="#000" fontSize={10} fontWeight="bold" formatter={(val) => `${val}%`} />
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </DashboardCard>
-                </div>
+                        <DashboardCard title="Charging Shares" borderColorClass="border-red-600" icon={Activity} className="col-span-1">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={preChargingData}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={40}
+                                        outerRadius={70}
+                                        paddingAngle={5}
+                                        dataKey="value"
+                                        label={(entry) => `${entry.percentage}%`}
+                                        labelLine={false}
+                                    >
+                                        {preChargingData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={PRECHARGING_COLORS[index % PRECHARGING_COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip total={preChargingTotal} />} />
+                                    <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
+                    </div>
 
-                {/* Row 2: Auth (1 col) + Power (2 cols) + Error (1 col) */}
-                <div className="grid grid-cols-4 gap-3 min-h-0 h-full">
-                    {/* Auth Pie - 1 col */}
-                    <DashboardCard title="Auth Methods" borderColorClass="border-blue-500" icon={CircleDot} className="col-span-1">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={pieData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={40}
-                                    outerRadius={70}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
-                                    {pieData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip content={<CustomTooltip total={pieTotal} />} />
-                                <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </DashboardCard>
+                    {/* Row 2: Network Performance (3 cols) + Error Summary (1 col) */}
+                    <div className="grid grid-cols-4 gap-3 h-[280px]">
+                        <DashboardCard 
+                            title={selectedOEM ? `🔍 Network Performance - ${selectedOEM}` : "Network Performance (Neg Stop%)"} 
+                            borderColorClass={selectedOEM ? "border-red-600" : "border-amber-700"} 
+                            icon={Layers} 
+                            className="col-span-3"
+                        >
+                            {selectedOEM && (
+                                <div className="absolute top-12 right-4 bg-red-600 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-lg z-10 animate-pulse">
+                                    Filtered by OEM
+                                </div>
+                            )}
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={networkData} margin={{ top: 20, right: 10, left: 0, bottom: 20 }}>
+                                    <defs>
+                                        <style>
+                                            {`
+                                                .recharts-bar-rectangle {
+                                                    stroke: none !important;
+                                                }
+                                                .recharts-rectangle {
+                                                    stroke: none !important;
+                                                }
+                                            `}
+                                        </style>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                    <XAxis
+                                        dataKey="name"
+                                        tick={{ fontSize: 9, fontWeight: 'bold' }}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        dy={10}
+                                        interval={0}
+                                        angle={-45}
+                                        textAnchor="end"
+                                    />
+                                    <YAxis hide />
+                                    <Tooltip cursor={{ fill: '#FEE2E2', stroke: 'none' }} content={<CustomTooltip />} />
+                                    <Bar 
+                                        dataKey="value" 
+                                        radius={[6, 6, 0, 0]} 
+                                        cursor="pointer"
+                                        isAnimationActive={false}
+                                        onClick={(data) => {
+                                            if (data && data.name) {
+                                                handleOEMClick(data.name);
+                                            }
+                                        }}
+                                    >
+                                        <LabelList 
+                                            dataKey="value" 
+                                            position="top" 
+                                            fill="#000" 
+                                            fontSize={10} 
+                                            fontWeight="bold" 
+                                            formatter={(val) => `${val}%`}
+                                        />
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
 
-                    {/* Line Chart - 2 cols (Reduced from 3) */}
-                    <DashboardCard title="Power Quality" borderColorClass="border-orange-500" icon={Activity} className="col-span-2">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={lineData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                                <XAxis
-                                    dataKey="label"
-                                    axisLine={false}
-                                    tickLine={false}
-                                    tick={{ fill: '#6B7280', fontSize: 10 }}
-                                    dy={10}
-                                    minTickGap={30}
-                                />
-                                <YAxis
-                                    axisLine={false}
-                                    tickLine={false}
-                                    tick={{ fill: '#6B7280', fontSize: 10 }}
-                                    label={{ value: 'Power (kW)', angle: -90, position: 'insideLeft', style: { fill: '#9CA3AF', fontSize: '10px' } }}
-                                />
-                                <Tooltip content={<CustomTooltip />} />
-                                <Legend verticalAlign="top" align="right" height={30} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
-                                <Line
-                                    type="monotone"
-                                    dataKey="peak"
-                                    name="Peak Power"
-                                    stroke={COLORS.orange}
-                                    strokeWidth={2}
-                                    dot={false}
-                                    activeDot={{ r: 4 }}
-                                />
-                                <Line
-                                    type="monotone"
-                                    dataKey="avg"
-                                    name="Avg Power"
-                                    stroke={COLORS.green}
-                                    strokeWidth={2}
-                                    dot={false}
-                                    activeDot={{ r: 4 }}
-                                />
-                            </LineChart>
-                        </ResponsiveContainer>
-                    </DashboardCard>
+                        <DashboardCard title="Error Summary" borderColorClass="border-red-600" icon={Activity} className="col-span-1">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={errorData}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={40}
+                                        outerRadius={70}
+                                        paddingAngle={5}
+                                        dataKey="value"
+                                        label={(entry) => `${entry.percentage}%`}
+                                        labelLine={false}
+                                    >
+                                        {errorData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={ERROR_COLORS[index % ERROR_COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip total={errorTotal} />} />
+                                    <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
+                    </div>
 
-                    {/* Error Summary Pie - Moved to Row 2 Col 4 */}
-                    <DashboardCard title="Error Summary" borderColorClass="border-red-600" icon={Activity} className="col-span-1">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={errorData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={40}
-                                    outerRadius={70}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
-                                    {errorData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={ERROR_COLORS[index % ERROR_COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip content={<CustomTooltip total={errorTotal} />} />
-                                <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </DashboardCard>
+                    {/* Row 3: Power Quality (3 cols) + Auth Methods (1 col) */}
+                    <div className="grid grid-cols-4 gap-3 h-[280px]">
+                        <DashboardCard title="Power Quality" borderColorClass="border-orange-500" icon={Activity} className="col-span-3">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={lineData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                    <XAxis
+                                        dataKey="label"
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#6B7280', fontSize: 10 }}
+                                        dy={10}
+                                        minTickGap={30}
+                                    />
+                                    <YAxis
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#6B7280', fontSize: 10 }}
+                                        label={{ value: 'Power (kW)', angle: -90, position: 'insideLeft', style: { fill: '#9CA3AF', fontSize: '10px' } }}
+                                    />
+                                    <Tooltip content={<CustomTooltip />} />
+                                    <Legend verticalAlign="top" align="right" height={30} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
+                                    <Line
+                                        type="monotone"
+                                        dataKey="peak"
+                                        name="Peak Power"
+                                        stroke={COLORS.orange}
+                                        strokeWidth={2}
+                                        dot={false}
+                                        activeDot={{ r: 4 }}
+                                    />
+                                    <Line
+                                        type="monotone"
+                                        dataKey="avg"
+                                        name="Avg Power"
+                                        stroke={COLORS.green}
+                                        strokeWidth={2}
+                                        dot={false}
+                                        activeDot={{ r: 4 }}
+                                    />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
+
+                        <DashboardCard title="Auth Methods" borderColorClass="border-blue-500" icon={CircleDot} className="col-span-1">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={pieData}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={40}
+                                        outerRadius={70}
+                                        paddingAngle={5}
+                                        dataKey="value"
+                                        label={(entry) => `${entry.percentage}%`}
+                                        labelLine={false}
+                                    >
+                                        {pieData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip total={pieTotal} />} />
+                                    <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
+                    </div>
                 </div>
             </div>
         </motion.div>
