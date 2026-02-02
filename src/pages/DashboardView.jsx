@@ -292,6 +292,75 @@ const processErrorBreakdown = (result) => {
         .slice(0, 5); // Top 5 reasons
 };
 
+// Process Top CPIDs by Negative Stops for an OEM
+const getTopCPIDsByNegativeStops = (allResults, oemName) => {
+    if (!allResults || !oemName) return [];
+    
+    const cpidStats = [];
+    
+    Object.entries(allResults).forEach(([key, data]) => {
+        if (key === 'All Files') return;
+        
+        // Check if this file belongs to the selected OEM
+        let oem = 'Unknown';
+        try {
+            if (data.info) {
+                let info = data.info;
+                if (typeof info === 'string') info = JSON.parse(info);
+                if (Array.isArray(info) && info.length > 0) {
+                    oem = info[0]['OEM Name'] || 
+                          info[0]['OEM'] || 
+                          info[0]['Make'] || 
+                          info[0]['Manufacturer'] ||
+                          info[0]['oem_name'] ||
+                          'Unknown';
+                }
+            }
+        } catch (e) { }
+        
+        oem = String(oem).trim();
+        if (!oem || oem === 'Unknown' || oem === '') {
+            oem = 'UNKNOWN';
+        }
+        
+        // Only process if this matches the selected OEM
+        if (oem !== oemName) return;
+        
+        // Get CPID and Station Name
+        const cpid = getChargePointID(data);
+        const stationName = getStationName(data);
+        const displayName = stationName && cpid && cpid !== 'Unknown' 
+            ? `${stationName} - ${cpid}` 
+            : (cpid && cpid !== 'Unknown' ? cpid : stationName || key);
+        
+        // Calculate negative stops
+        const negativeStops = (data.report_1?.['Failed / Error Stops'] || 0) + 
+                             (data.report_2?.['Failed / Error Stops'] || 0);
+        const chargingSessions = (data.report_1?.['Charging Sessions'] || 0) + 
+                                (data.report_2?.['Charging Sessions'] || 0);
+        const negativeStopPercent = chargingSessions > 0 
+            ? Math.round((negativeStops / chargingSessions) * 100) 
+            : 0;
+        
+        cpidStats.push({
+            cpid,
+            displayName,
+            negativeStops,
+            chargingSessions,
+            negativeStopPercent,
+            fileName: key
+        });
+    });
+    
+    // Filter out CPIDs with 0 sessions or 0 negative stops
+    const filteredStats = cpidStats.filter(item => 
+        item.chargingSessions > 0 && item.negativeStops > 0
+    );
+    
+    // Sort by negative stops (highest first)
+    return filteredStats.sort((a, b) => b.negativeStops - a.negativeStops);
+};
+
 // Process Network Performance (Negative Stop %)
 const processNetworkPerformance = (allResults) => {
     if (!allResults || Object.keys(allResults).length === 0) return { chartData: [], oemMapping: {} };
@@ -569,6 +638,8 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
     const [selectedCpId, setSelectedCpId] = useState('All');
     const [selectedStation, setSelectedStation] = useState('All');
     const [selectedOEM, setSelectedOEM] = useState(null); // For OEM filtering from Network Performance chart
+    const [showCPIDModal, setShowCPIDModal] = useState(false);
+    const [cpidModalData, setCpidModalData] = useState({ oemName: '', topCPIDs: [] });
 
     // Grouping Logic
     const groupedResults = useMemo(() => {
@@ -650,7 +721,22 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
     };
 
     const handleOEMClick = (oemName) => {
-        if (oemName === 'OVERALL' || oemName === selectedOEM) {
+        if (oemName === 'OVERALL') {
+            return; // Don't process OVERALL
+        }
+        
+        // Get top CPIDs for this OEM
+        const topCPIDs = getTopCPIDsByNegativeStops(allResults, oemName);
+        
+        // Show modal with results
+        setCpidModalData({
+            oemName: oemName,
+            topCPIDs: topCPIDs
+        });
+        setShowCPIDModal(true);
+        
+        // Also apply the OEM filter
+        if (oemName === selectedOEM) {
             setSelectedOEM(null);
         } else {
             setSelectedOEM(oemName);
@@ -1036,6 +1122,156 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                     </div>
                 </div>
             </div>
+
+            {/* CPID Ranking Modal */}
+            <AnimatePresence>
+                {showCPIDModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+                        onClick={() => setShowCPIDModal(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Modal Header */}
+                            <div className="bg-gray-800 px-6 py-4 flex items-center justify-between border-b-4 border-red-500">
+                                <div className="flex items-center gap-3">
+                                    <Plug className="w-6 h-6 text-white" />
+                                    <div>
+                                        <h3 className="text-xl font-bold text-white">Top CPIDs by Negative Stops</h3>
+                                        <p className="text-sm text-gray-300 mt-1">OEM: {cpidModalData.oemName}</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setShowCPIDModal(false)}
+                                    className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+                                >
+                                    <X className="w-5 h-5 text-white" />
+                                </button>
+                            </div>
+
+                            {/* Modal Content */}
+                            <div className="p-4 overflow-y-auto max-h-[calc(80vh-100px)]">
+                                {cpidModalData.topCPIDs.length > 0 ? (
+                                    <div className="space-y-2">
+                                        {cpidModalData.topCPIDs.map((item, index) => {
+                                            const isHighPriority = item.negativeStops > 10;
+                                            const isMediumPriority = item.negativeStops > 5 && item.negativeStops <= 10;
+                                            
+                                            return (
+                                                <motion.div
+                                                    key={item.cpid + index}
+                                                    initial={{ x: -20, opacity: 0 }}
+                                                    animate={{ x: 0, opacity: 1 }}
+                                                    transition={{ delay: index * 0.05 }}
+                                                    className={`border rounded-lg p-3 hover:shadow-md transition-all duration-200 ${
+                                                        isHighPriority 
+                                                            ? 'border-red-300 bg-red-50' 
+                                                            : isMediumPriority 
+                                                            ? 'border-orange-300 bg-orange-50'
+                                                            : 'border-gray-200 bg-white'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        {/* Rank Badge */}
+                                                        <div className={`flex-none w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm border-2 ${
+                                                            index === 0 
+                                                                ? 'bg-yellow-500 text-white border-yellow-600' 
+                                                                : index === 1
+                                                                ? 'bg-gray-400 text-white border-gray-500'
+                                                                : index === 2
+                                                                ? 'bg-orange-500 text-white border-orange-600'
+                                                                : 'bg-white text-gray-700 border-gray-300'
+                                                        }`}>
+                                                            #{index + 1}
+                                                        </div>
+
+                                                        {/* CPID Info */}
+                                                        <div className="flex-1 min-w-0">
+                                                            <h4 className="font-semibold text-gray-800 text-sm truncate" title={item.displayName}>
+                                                                {item.displayName}
+                                                            </h4>
+                                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                                CPID: <span className="font-mono">{item.cpid}</span> • Sessions: <strong>{item.chargingSessions}</strong>
+                                                            </p>
+                                                        </div>
+
+                                                        {/* Stats */}
+                                                        <div className="flex-none flex items-center gap-3">
+                                                            <div className="text-right">
+                                                                <div className={`text-2xl font-bold ${
+                                                                    isHighPriority 
+                                                                        ? 'text-red-600' 
+                                                                        : isMediumPriority 
+                                                                        ? 'text-orange-600'
+                                                                        : 'text-gray-600'
+                                                                }`}>
+                                                                    {item.negativeStops}
+                                                                </div>
+                                                                <p className="text-xs text-gray-500">Errors</p>
+                                                            </div>
+                                                            <div className="px-2.5 py-1 rounded text-xs font-bold" style={{
+                                                                backgroundColor: item.negativeStopPercent > 50 ? '#FEE2E2' : item.negativeStopPercent > 25 ? '#FEF3C7' : '#DCFCE7',
+                                                                color: item.negativeStopPercent > 50 ? '#991B1B' : item.negativeStopPercent > 25 ? '#92400E' : '#166534'
+                                                            }}>
+                                                                {item.negativeStopPercent}%
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Progress Bar */}
+                                                    <div className="mt-2 bg-gray-200 rounded h-1.5 overflow-hidden">
+                                                        <div 
+                                                            className={`h-full transition-all duration-500 ${
+                                                                isHighPriority 
+                                                                    ? 'bg-red-500' 
+                                                                    : isMediumPriority 
+                                                                    ? 'bg-orange-500'
+                                                                    : 'bg-blue-500'
+                                                            }`}
+                                                            style={{ 
+                                                                width: `${Math.min(item.negativeStopPercent, 100)}%` 
+                                                            }}
+                                                        />
+                                                    </div>
+                                                </motion.div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-8">
+                                        <div className="text-gray-400 mb-3">
+                                            <Plug className="w-12 h-12 mx-auto" />
+                                        </div>
+                                        <p className="text-gray-600 font-semibold">No data found for {cpidModalData.oemName}</p>
+                                        <p className="text-sm text-gray-500 mt-1">No CPIDs with negative stops detected</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className="border-t border-gray-200 px-4 py-3 bg-gray-50 flex items-center justify-between">
+                                <div className="text-sm text-gray-600">
+                                    <strong>{cpidModalData.topCPIDs.length}</strong> CPID(s) • {cpidModalData.oemName}
+                                </div>
+                                <button
+                                    onClick={() => setShowCPIDModal(false)}
+                                    className="px-4 py-1.5 bg-gray-700 hover:bg-gray-800 text-white text-sm rounded-lg font-semibold transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </motion.div>
     );
 }
