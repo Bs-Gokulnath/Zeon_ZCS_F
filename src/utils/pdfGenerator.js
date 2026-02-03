@@ -31,13 +31,19 @@ const renderSimplifiedReportPage = (doc, data, title) => {
   doc.setTextColor(...textColor);
   doc.text(title || 'Charger Health Report', 150, 8, { align: 'center' });
   
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 100, 100);
-  const now = new Date();
-  const generatedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
-  const generatedTime = now.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-  doc.text(`Generated: ${generatedDate}, ${generatedTime}`, 150, 12, { align: 'center' });
+  // Check if this is a combined report (multiple chargers)
+  const isCombinedReport = title && (title.includes('Combined Report') || title.includes('All') && title.includes('Charger'));
+  
+  // Only show generated date/time and station info for single charger reports
+  if (!isCombinedReport) {
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    const now = new Date();
+    const generatedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+    const generatedTime = now.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    doc.text(`Generated: ${generatedDate}, ${generatedTime}`, 150, 12, { align: 'center' });
+  }
 
   // Parse station info
   let stationInfo = null;
@@ -57,9 +63,10 @@ const renderSimplifiedReportPage = (doc, data, title) => {
   }
 
   const stationCapacity = stationInfo ? parseFloat(stationInfo['Power (kW)'] || 0) : 0;
-  let currentY = 15;
+  let currentY = isCombinedReport ? 12 : 15;
   
-  if (stationInfo || data.date) {
+  // Only show station details and period for single charger reports
+  if (!isCombinedReport && (stationInfo || data.date)) {
     doc.setFontSize(6);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(80, 80, 80);
