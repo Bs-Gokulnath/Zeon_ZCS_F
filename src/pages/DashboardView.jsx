@@ -29,6 +29,10 @@ const DashboardCard = ({ title, icon: Icon, borderColorClass = "border-blue-500"
 // Custom Tooltip
 const CustomTooltip = ({ active, payload, label, total }) => {
     if (active && payload && payload.length) {
+        const entry = payload[0];
+        // Check if this has P, C, N breakdown data
+        const hasBreakdown = entry.payload && (entry.payload.preparing !== undefined || entry.payload.charging !== undefined || entry.payload.negative !== undefined);
+        
         return (
             <div className="bg-white/95 backdrop-blur-md p-2 border border-gray-200 shadow-xl rounded-xl text-xs z-50">
                 <p className="font-bold text-gray-800 mb-1">{label}</p>
@@ -53,6 +57,15 @@ const CustomTooltip = ({ active, payload, label, total }) => {
                         </p>
                     );
                 })}
+                {hasBreakdown && (
+                    <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-600">
+                        <div className="flex gap-3 justify-between">
+                            <span>P: <strong className="text-blue-600">{entry.payload.preparing || 0}</strong></span>
+                            <span>C: <strong className="text-green-600">{entry.payload.charging || 0}</strong></span>
+                            <span>N: <strong className="text-red-600">{entry.payload.negative || 0}</strong></span>
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }
@@ -120,6 +133,27 @@ const FunnelSection = ({ preparing, charging, negative, successful }) => {
         );
     };
 
+    // Custom label renderer for right side with hover title
+    const renderRightLabel = (props) => {
+        const { x, y, width, height, index } = props;
+        const entry = data[index];
+        return (
+            <text 
+                x={x + width + 5} 
+                y={y + height / 2} 
+                fill="#4B5563" 
+                textAnchor="start" 
+                dominantBaseline="middle"
+                fontSize={10}
+                fontWeight="normal"
+                style={{ cursor: 'pointer' }}
+            >
+                <title>{`${entry.name}: ${entry.value} (${entry.percentage}%)`}</title>
+                {entry.name}
+            </text>
+        );
+    };
+
     return (
         <div className="flex flex-col h-full">
             <div className="flex-1 min-h-0">
@@ -131,7 +165,7 @@ const FunnelSection = ({ preparing, charging, negative, successful }) => {
                             data={data}
                             isAnimationActive
                         >
-                            <LabelList position="right" fill="#4B5563" stroke="none" dataKey="name" fontSize={10} />
+                            <LabelList position="right" content={renderRightLabel} />
                             <LabelList position="center" content={renderCenterLabel} />
                         </Funnel>
                     </FunnelChart>
@@ -406,13 +440,17 @@ const processNetworkPerformance = (allResults) => {
         const n1 = (data.report_1?.['Failed / Error Stops'] || 0);
         const t2 = (data.report_2?.['Charging Sessions'] || 0);
         const n2 = (data.report_2?.['Failed / Error Stops'] || 0);
+        const p1 = (data.report_1?.['Preparing Sessions'] || 0);
+        const p2 = (data.report_2?.['Preparing Sessions'] || 0);
 
         if (!stats[oem]) {
-            stats[oem] = { total: 0, negative: 0 };
+            stats[oem] = { total: 0, negative: 0, preparing: 0, charging: 0 };
             oemMapping[oem] = [];
         }
         stats[oem].total += t1 + t2;
         stats[oem].negative += n1 + n2;
+        stats[oem].preparing += p1 + p2;
+        stats[oem].charging += t1 + t2;
         oemMapping[oem].push(key); // Store file key for this OEM
 
         grandTotal += t1 + t2;
@@ -420,10 +458,13 @@ const processNetworkPerformance = (allResults) => {
     });
 
     // Create chart data from OEM stats
-    const chartData = Object.entries(stats).map(([name, { total, negative }]) => ({
+    const chartData = Object.entries(stats).map(([name, { total, negative, preparing, charging }]) => ({
         name,
         value: total > 0 ? Math.round((negative / total) * 100) : 0,
-        fill: '#C2410C' // Orange-700
+        fill: '#C2410C', // Orange-700
+        preparing,
+        charging,
+        negative
     }));
 
     // Sort by value (highest negative stop % first)
@@ -434,6 +475,172 @@ const processNetworkPerformance = (allResults) => {
     chartData.push({ name: 'OVERALL', value: overallVal, fill: '#9A3412' }); // Darker Orange/Brown
 
     return { chartData, oemMapping };
+};
+
+// Process Network Performance by Station (Negative Stop %)
+const processNetworkPerformanceByStation = (allResults) => {
+    if (!allResults || Object.keys(allResults).length === 0) return [];
+
+    const stationStats = {};
+
+    Object.entries(allResults).forEach(([key, data]) => {
+        if (key === 'All Files') return;
+
+        // Get Station Name
+        const stationName = getStationName(data) || 'Unknown Station';
+
+        // Get counts
+        const t1 = (data.report_1?.['Charging Sessions'] || 0);
+        const n1 = (data.report_1?.['Failed / Error Stops'] || 0);
+        const t2 = (data.report_2?.['Charging Sessions'] || 0);
+        const n2 = (data.report_2?.['Failed / Error Stops'] || 0);
+        const p1 = (data.report_1?.['Preparing Sessions'] || 0);
+        const p2 = (data.report_2?.['Preparing Sessions'] || 0);
+
+        if (!stationStats[stationName]) {
+            stationStats[stationName] = { total: 0, negative: 0, preparing: 0, charging: 0 };
+        }
+        stationStats[stationName].total += t1 + t2;
+        stationStats[stationName].negative += n1 + n2;
+        stationStats[stationName].preparing += p1 + p2;
+        stationStats[stationName].charging += t1 + t2;
+    });
+
+    // Create chart data
+    const chartData = Object.entries(stationStats).map(([name, { total, negative, preparing, charging }]) => ({
+        name,
+        value: total > 0 ? Math.round((negative / total) * 100) : 0,
+        fill: '#DC2626', // Red-600
+        preparing,
+        charging,
+        negative
+    }));
+
+    // Sort by value (highest negative stop % first)
+    return chartData.sort((a, b) => b.value - a.value);
+};
+
+// Process Precharging Failure by OEM
+const processPrechargingFailureByOEM = (allResults) => {
+    if (!allResults || Object.keys(allResults).length === 0) return [];
+
+    const oemStats = {};
+
+    Object.entries(allResults).forEach(([key, data]) => {
+        if (key === 'All Files') return;
+
+        // Extract OEM
+        let oem = 'Unknown';
+        try {
+            if (data.info) {
+                let info = data.info;
+                if (typeof info === 'string') info = JSON.parse(info);
+                if (Array.isArray(info) && info.length > 0) {
+                    oem = info[0]['OEM Name'] || 
+                          info[0]['OEM'] || 
+                          info[0]['Make'] || 
+                          info[0]['Manufacturer'] ||
+                          info[0]['oem_name'] ||
+                          'Unknown';
+                }
+            }
+        } catch (e) { }
+        
+        oem = String(oem).trim();
+        if (!oem || oem === 'Unknown' || oem === '') {
+            oem = 'UNKNOWN';
+        }
+
+        // Count precharging failures from raw data
+        let prechargingFailures = 0;
+        
+        // Check Connector1
+        if (Array.isArray(data.Connector1)) {
+            prechargingFailures += data.Connector1.filter(row => {
+                const errorCode = getVal(row, 'vendorErrorCode', 'VendorErrorCode', 'VENDORERRORCODE', 'ErrorCode');
+                const isCharging = getVal(row, 'is_Charging', 'isCharging', 'IS_CHARGING');
+                return String(errorCode).toLowerCase().includes('precharging') && isCharging === 0;
+            }).length;
+        }
+        
+        // Check Connector2
+        if (Array.isArray(data.Connector2)) {
+            prechargingFailures += data.Connector2.filter(row => {
+                const errorCode = getVal(row, 'vendorErrorCode', 'VendorErrorCode', 'VENDORERRORCODE', 'ErrorCode');
+                const isCharging = getVal(row, 'is_Charging', 'isCharging', 'IS_CHARGING');
+                return String(errorCode).toLowerCase().includes('precharging') && isCharging === 0;
+            }).length;
+        }
+
+        if (!oemStats[oem]) {
+            oemStats[oem] = 0;
+        }
+        oemStats[oem] += prechargingFailures;
+    });
+
+    // Create chart data
+    const chartData = Object.entries(oemStats)
+        .map(([name, value]) => ({
+            name,
+            value,
+            fill: '#F59E0B' // Amber-500
+        }))
+        .filter(item => item.value > 0); // Only show OEMs with failures
+
+    // Sort by value (highest first)
+    return chartData.sort((a, b) => b.value - a.value);
+};
+
+// Process Precharging Failure by Station
+const processPrechargingFailureByStation = (allResults) => {
+    if (!allResults || Object.keys(allResults).length === 0) return [];
+
+    const stationStats = {};
+
+    Object.entries(allResults).forEach(([key, data]) => {
+        if (key === 'All Files') return;
+
+        // Get Station Name
+        const stationName = getStationName(data) || 'Unknown Station';
+
+        // Count precharging failures from raw data
+        let prechargingFailures = 0;
+        
+        // Check Connector1
+        if (Array.isArray(data.Connector1)) {
+            prechargingFailures += data.Connector1.filter(row => {
+                const errorCode = getVal(row, 'vendorErrorCode', 'VendorErrorCode', 'VENDORERRORCODE', 'ErrorCode');
+                const isCharging = getVal(row, 'is_Charging', 'isCharging', 'IS_CHARGING');
+                return String(errorCode).toLowerCase().includes('precharging') && isCharging === 0;
+            }).length;
+        }
+        
+        // Check Connector2
+        if (Array.isArray(data.Connector2)) {
+            prechargingFailures += data.Connector2.filter(row => {
+                const errorCode = getVal(row, 'vendorErrorCode', 'VendorErrorCode', 'VENDORERRORCODE', 'ErrorCode');
+                const isCharging = getVal(row, 'is_Charging', 'isCharging', 'IS_CHARGING');
+                return String(errorCode).toLowerCase().includes('precharging') && isCharging === 0;
+            }).length;
+        }
+
+        if (!stationStats[stationName]) {
+            stationStats[stationName] = 0;
+        }
+        stationStats[stationName] += prechargingFailures;
+    });
+
+    // Create chart data
+    const chartData = Object.entries(stationStats)
+        .map(([name, value]) => ({
+            name,
+            value,
+            fill: '#8B5CF6' // Purple-500
+        }))
+        .filter(item => item.value > 0); // Only show Stations with failures
+
+    // Sort by value (highest first)
+    return chartData.sort((a, b) => b.value - a.value);
 };
 
 
@@ -578,6 +785,29 @@ const getDisplayLabel = (data, fileName) => {
     return fileName;
 };
 
+// Helper: Get Connector Type (AC/DC)
+const getConnectorType = (data) => {
+    try {
+        if (data && data.info) {
+            let info = data.info;
+            if (typeof info === 'string') info = JSON.parse(info);
+            if (Array.isArray(info) && info.length > 0) {
+                const connectorStandard = info[0]['Connector Standard(AC/DC)'] || 
+                                         info[0]['Connector Standard'] || 
+                                         info[0]['ConnectorStandard'] ||
+                                         info[0]['Type'] ||
+                                         null;
+                if (connectorStandard) {
+                    return String(connectorStandard).toUpperCase().trim();
+                }
+            }
+        }
+    } catch (e) { 
+        console.error('Error getting connector type:', e);
+    }
+    return null;
+};
+
 // Helper: Aggregate Results
 const aggregateData = (resultsList) => {
     if (!resultsList || !Array.isArray(resultsList) || resultsList.length === 0) return {};
@@ -640,6 +870,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
     const [selectedOEM, setSelectedOEM] = useState(null); // For OEM filtering from Network Performance chart
     const [showCPIDModal, setShowCPIDModal] = useState(false);
     const [cpidModalData, setCpidModalData] = useState({ oemName: '', topCPIDs: [] });
+    const [connectorType, setConnectorType] = useState('DC'); // AC, Combined, DC - default to DC
 
     // Grouping Logic
     const groupedResults = useMemo(() => {
@@ -649,6 +880,15 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
 
         Object.entries(allResults).forEach(([filename, data]) => {
             if (filename === 'All Files') return;
+
+            // Filter by connector type
+            const connectorStandard = getConnectorType(data);
+            if (connectorType !== 'Combined') {
+                // Skip if doesn't match selected connector type
+                if (!connectorStandard || connectorStandard !== connectorType) {
+                    return;
+                }
+            }
 
             // By CPID
             const cpid = getChargePointID(data);
@@ -661,30 +901,45 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
             byStation[station].push(data);
         });
         return { byId, byStation };
-    }, [allResults]);
+    }, [allResults, connectorType]);
 
     const cpIds = Object.keys(groupedResults.byId).sort();
     const stations = Object.keys(groupedResults.byStation).sort();
 
     // Determine Active Result
     const activeResult = useMemo(() => {
+        // Create filtered allResults based on connector type
+        const filteredAllResults = {};
+        if (allResults) {
+            Object.entries(allResults).forEach(([key, data]) => {
+                if (key === 'All Files') {
+                    filteredAllResults[key] = data;
+                    return;
+                }
+                const connectorStandard = getConnectorType(data);
+                if (connectorType === 'Combined' || connectorStandard === connectorType) {
+                    filteredAllResults[key] = data;
+                }
+            });
+        }
+
         // 0. OEM Filter (Highest priority - from Network Performance chart)
         if (selectedOEM && selectedOEM !== 'OVERALL') {
-            const networkPerf = processNetworkPerformance(allResults);
+            const networkPerf = processNetworkPerformance(filteredAllResults);
             const filesForOEM = networkPerf.oemMapping[selectedOEM] || [];
             if (filesForOEM.length === 1) {
-                return allResults[filesForOEM[0]] || result;
+                return filteredAllResults[filesForOEM[0]] || result;
             } else if (filesForOEM.length > 1) {
-                return aggregateData(filesForOEM.map(f => allResults[f]).filter(Boolean));
+                return aggregateData(filesForOEM.map(f => filteredAllResults[f]).filter(Boolean));
             }
         }
 
         // 1. Specific Files (Takes priority if selected)
         if (selectedFiles && selectedFiles.length > 0 && !selectedFiles.includes('All Files')) {
             if (selectedFiles.length === 1) {
-                return allResults[selectedFiles[0]] || result;
+                return filteredAllResults[selectedFiles[0]] || result;
             }
-            return aggregateData(selectedFiles.map(f => allResults[f]).filter(Boolean));
+            return aggregateData(selectedFiles.map(f => filteredAllResults[f]).filter(Boolean));
         }
         // 2. CP ID
         if (selectedCpId !== 'All' && groupedResults.byId[selectedCpId]) {
@@ -694,9 +949,15 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
         if (selectedStation !== 'All' && groupedResults.byStation[selectedStation]) {
             return aggregateData(groupedResults.byStation[selectedStation]);
         }
-        // 4. Default Globals
+        // 4. Default - aggregate filtered results
+        if (connectorType !== 'Combined') {
+            const filteredData = Object.values(filteredAllResults).filter(d => d !== filteredAllResults['All Files']);
+            if (filteredData.length > 0) {
+                return aggregateData(filteredData);
+            }
+        }
         return result;
-    }, [selectedFiles, selectedCpId, selectedStation, selectedOEM, groupedResults, result, allResults]);
+    }, [selectedFiles, selectedCpId, selectedStation, selectedOEM, groupedResults, result, allResults, connectorType]);
 
     // Handlers
     const handleFileFilterChange = (vals) => {
@@ -826,13 +1087,40 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
     // Dynamic Daily Line Data
     const lineData = processSessionTrend(activeResult);
 
-    // Network Performance Data (Global)
-    const networkPerformance = processNetworkPerformance(allResults);
+    // Create filtered allResults based on connector type for global charts
+    const filteredAllResultsForCharts = useMemo(() => {
+        const filtered = {};
+        if (allResults) {
+            Object.entries(allResults).forEach(([key, data]) => {
+                if (key === 'All Files') {
+                    filtered[key] = data;
+                    return;
+                }
+                const connectorStandard = getConnectorType(data);
+                if (connectorType === 'Combined' || connectorStandard === connectorType) {
+                    filtered[key] = data;
+                }
+            });
+        }
+        return filtered;
+    }, [allResults, connectorType]);
+
+    // Network Performance Data (Global) - using filtered data
+    const networkPerformance = processNetworkPerformance(filteredAllResultsForCharts);
     const networkData = networkPerformance.chartData.map(item => ({
         ...item,
         fill: selectedOEM === item.name ? '#DC2626' : (selectedOEM ? '#D1D5DB' : item.fill), // Bright red for selected, gray for others when filtered
         opacity: selectedOEM === item.name ? 1 : (selectedOEM ? 0.4 : 1)
     }));
+
+    // Network Performance by Station Data - using filtered data
+    const stationPerformanceData = processNetworkPerformanceByStation(filteredAllResultsForCharts);
+    
+    // Precharging Failure by OEM Data - using filtered data
+    const prechargingFailureData = processPrechargingFailureByOEM(filteredAllResultsForCharts);
+    
+    // Precharging Failure by Station Data - using filtered data
+    const prechargingFailureByStationData = processPrechargingFailureByStation(filteredAllResultsForCharts);
 
     return (
         <motion.div
@@ -852,6 +1140,40 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {/* Connector Type Toggle */}
+                    <div className="flex items-center bg-gray-100 rounded-lg p-0.5 border border-gray-200">
+                        <button
+                            onClick={() => setConnectorType('AC')}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                                connectorType === 'AC'
+                                    ? 'bg-blue-600 text-white shadow-sm'
+                                    : 'bg-transparent text-gray-600 hover:text-gray-800'
+                            }`}
+                        >
+                            AC
+                        </button>
+                        <button
+                            onClick={() => setConnectorType('Combined')}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                                connectorType === 'Combined'
+                                    ? 'bg-gray-700 text-white shadow-sm'
+                                    : 'bg-transparent text-gray-600 hover:text-gray-800'
+                            }`}
+                        >
+                            Combined
+                        </button>
+                        <button
+                            onClick={() => setConnectorType('DC')}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                                connectorType === 'DC'
+                                    ? 'bg-green-600 text-white shadow-sm'
+                                    : 'bg-transparent text-gray-600 hover:text-gray-800'
+                            }`}
+                        >
+                            DC
+                        </button>
+                    </div>
+
                     {/* Filter 1: Station Name */}
                     {stations.length > 1 && (
                         <SearchableSelect
@@ -963,12 +1285,12 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                         </DashboardCard>
                     </div>
 
-                    {/* Row 2: Network Performance (3 cols) + Error Summary (1 col) */}
+                    {/* Row 2: Network Performance by OEM (3 cols) + Error Summary (1 col) */}
                     <div className="grid grid-cols-4 gap-3 h-[280px]">
                         <DashboardCard 
-                            title={selectedOEM ? `🔍 Network Performance - ${selectedOEM}` : "Network Performance (Neg Stop%)"} 
+                            title={selectedOEM ? `🔍 Network Performance by OEM - ${selectedOEM}` : "1. Network Performance by OEM (Neg Stop%)"} 
                             borderColorClass={selectedOEM ? "border-red-600" : "border-amber-700"} 
-                            icon={Layers} 
+                            icon={Layers}
                             className="col-span-3"
                         >
                             {selectedOEM && (
@@ -1052,9 +1374,118 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                         </DashboardCard>
                     </div>
 
-                    {/* Row 3: Power Quality (3 cols) + Auth Methods (1 col) */}
+                    {/* Row 3: Network Performance by Station (Full Width) */}
+                    <div className="grid grid-cols-1 gap-3 h-[280px]">
+                        <DashboardCard title="2. Network Performance by Station (Neg Stop%)" borderColorClass="border-red-600" icon={Layers}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={stationPerformanceData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                    <XAxis
+                                        dataKey="name"
+                                        tick={{ fontSize: 9, fontWeight: 'bold' }}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        dy={10}
+                                        interval={0}
+                                        angle={-45}
+                                        textAnchor="end"
+                                    />
+                                    <YAxis hide />
+                                    <Tooltip cursor={{ fill: '#FEE2E2', stroke: 'none' }} content={<CustomTooltip />} />
+                                    <Bar 
+                                        dataKey="value" 
+                                        radius={[6, 6, 0, 0]}
+                                        isAnimationActive={false}
+                                    >
+                                        <LabelList 
+                                            dataKey="value" 
+                                            position="top" 
+                                            fill="#000" 
+                                            fontSize={10} 
+                                            fontWeight="bold" 
+                                            formatter={(val) => `${val}%`}
+                                        />
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
+                    </div>
+
+                    {/* Row 4: Precharging Failure by OEM (Full Width) */}
+                    <div className="grid grid-cols-1 gap-3 h-[280px]">
+                        <DashboardCard title="3. Precharging Failure by OEM" borderColorClass="border-orange-500" icon={Layers}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={prechargingFailureData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                    <XAxis
+                                        dataKey="name"
+                                        tick={{ fontSize: 9, fontWeight: 'bold' }}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        dy={10}
+                                        interval={0}
+                                        angle={-45}
+                                        textAnchor="end"
+                                    />
+                                    <YAxis hide />
+                                    <Tooltip cursor={{ fill: '#FEF3C7', stroke: 'none' }} content={<CustomTooltip />} />
+                                    <Bar 
+                                        dataKey="value" 
+                                        radius={[6, 6, 0, 0]}
+                                        isAnimationActive={false}
+                                    >
+                                        <LabelList 
+                                            dataKey="value" 
+                                            position="top" 
+                                            fill="#000" 
+                                            fontSize={10} 
+                                            fontWeight="bold"
+                                        />
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
+                    </div>
+
+                    {/* Row 5: Precharging Failure by Station (Full Width) */}
+                    <div className="grid grid-cols-1 gap-3 h-[280px]">
+                        <DashboardCard title="4. Precharging Failure by Station" borderColorClass="border-purple-500" icon={Layers}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={prechargingFailureByStationData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                    <XAxis
+                                        dataKey="name"
+                                        tick={{ fontSize: 9, fontWeight: 'bold' }}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        dy={10}
+                                        interval={0}
+                                        angle={-45}
+                                        textAnchor="end"
+                                    />
+                                    <YAxis hide />
+                                    <Tooltip cursor={{ fill: '#EDE9FE', stroke: 'none' }} content={<CustomTooltip />} />
+                                    <Bar 
+                                        dataKey="value" 
+                                        radius={[6, 6, 0, 0]}
+                                        isAnimationActive={false}
+                                    >
+                                        <LabelList 
+                                            dataKey="value" 
+                                            position="top" 
+                                            fill="#000" 
+                                            fontSize={10} 
+                                            fontWeight="bold"
+                                        />
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </DashboardCard>
+                    </div>
+
+                    {/* Row 6: Power Quality (3 cols) + Auth Methods (1 col) */}
                     <div className="grid grid-cols-4 gap-3 h-[280px]">
-                        <DashboardCard title="Power Quality" borderColorClass="border-orange-500" icon={Activity} className="col-span-3">
+                        <DashboardCard title="5. Power Quality" borderColorClass="border-green-500" icon={Activity} className="col-span-3">
                             <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={lineData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -1096,29 +1527,32 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                             </ResponsiveContainer>
                         </DashboardCard>
 
-                        <DashboardCard title="Auth Methods" borderColorClass="border-blue-500" icon={CircleDot} className="col-span-1">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={pieData}
-                                        cx="50%"
-                                        cy="50%"
-                                        innerRadius={40}
-                                        outerRadius={70}
-                                        paddingAngle={5}
-                                        dataKey="value"
-                                        label={(entry) => `${entry.percentage}%`}
-                                        labelLine={false}
-                                    >
-                                        {pieData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip content={<CustomTooltip total={pieTotal} />} />
-                                    <Legend verticalAlign="bottom" height={24} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                        </DashboardCard>
+                        <div className="col-span-1 flex flex-col gap-3">
+                            {/* Auth Methods */}
+                            <DashboardCard title="Auth Methods" borderColorClass="border-blue-500" icon={CircleDot} className="h-[135px]">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={pieData}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={30}
+                                            outerRadius={50}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                            label={(entry) => `${entry.percentage}%`}
+                                            labelLine={false}
+                                        >
+                                            {pieData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip content={<CustomTooltip total={pieTotal} />} />
+                                        <Legend verticalAlign="bottom" height={20} iconSize={6} wrapperStyle={{ fontSize: '9px' }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </DashboardCard>
+                        </div>
                     </div>
                 </div>
             </div>
