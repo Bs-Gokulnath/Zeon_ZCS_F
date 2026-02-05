@@ -1487,7 +1487,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                     <div className="grid grid-cols-4 gap-3 h-[280px]">
                         <DashboardCard title="5. Power Quality" borderColorClass="border-green-500" icon={Activity} className="col-span-3">
                             <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={lineData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                <LineChart data={lineData} margin={{ top: 10, right: 60, left: 20, bottom: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                                     <XAxis
                                         dataKey="label"
@@ -1498,14 +1498,48 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                                         minTickGap={30}
                                     />
                                     <YAxis
+                                        yAxisId="left"
                                         axisLine={false}
                                         tickLine={false}
-                                        tick={{ fill: '#6B7280', fontSize: 10 }}
-                                        label={{ value: 'Power (kW)', angle: -90, position: 'insideLeft', style: { fill: '#9CA3AF', fontSize: '10px' } }}
+                                        tick={{ fill: '#F59E0B', fontSize: 9 }}
+                                        width={40}
+                                    />
+                                    <YAxis
+                                        yAxisId="right"
+                                        orientation="right"
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#10B981', fontSize: 9 }}
+                                        width={50}
                                     />
                                     <Tooltip content={<CustomTooltip />} />
-                                    <Legend verticalAlign="top" align="right" height={30} iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
+                                    <Legend 
+                                        verticalAlign="top" 
+                                        align="right" 
+                                        height={30} 
+                                        iconSize={8} 
+                                        wrapperStyle={{ fontSize: '10px' }}
+                                        content={(props) => {
+                                            const { payload } = props;
+                                            return (
+                                                <div className="flex gap-4 justify-end text-xs">
+                                                    {payload.map((entry, index) => (
+                                                        <div key={`legend-${index}`} className="flex items-center gap-1">
+                                                            <div 
+                                                                className="w-3 h-0.5" 
+                                                                style={{ backgroundColor: entry.color }}
+                                                            />
+                                                            <span style={{ color: entry.color, fontWeight: 'bold' }}>
+                                                                {entry.value === 'Peak Power' ? 'Peak (L)' : 'Avg (R)'}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            );
+                                        }}
+                                    />
                                     <Line
+                                        yAxisId="left"
                                         type="monotone"
                                         dataKey="peak"
                                         name="Peak Power"
@@ -1515,6 +1549,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                                         activeDot={{ r: 4 }}
                                     />
                                     <Line
+                                        yAxisId="right"
                                         type="monotone"
                                         dataKey="avg"
                                         name="Avg Power"
