@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import JSZip from 'jszip';
 import { generateChargerHealthPDF } from '../utils/pdfGenerator';
+import { exportConnectorsToExcel } from '../utils/excelExporter';
 import zeonLogo from '../assets/zeon_charging.webp';
 import DashboardView from './DashboardView';
 import { AuthenticationPieChart, UsageReadinessFunnelChart, PowerQualityLineChart } from './report_graphs';
@@ -821,6 +822,43 @@ export default function Home() {
                   <line x1="9" y1="15" x2="15" y2="15" />
                 </svg>
                 Download PDF Report
+              </button>
+
+              <button
+                onClick={() => {
+                  const isAll = selectedFiles.includes('All Files') || selectedFiles.length === 0;
+                  
+                  // Get the correct data structure for export
+                  let dataToPrint;
+                  if (isAll) {
+                    // When "All Files" is selected, use the aggregated result
+                    dataToPrint = allResults['All Files'] || result;
+                  } else {
+                    // When specific file(s) selected, use the result (already aggregated if multiple)
+                    dataToPrint = result;
+                  }
+
+                  let filename = 'Connectors_Data';
+                  if (!isAll && selectedFiles.length === 1) {
+                    const cpId = getCPID(result);
+                    filename = cpId ? `${cpId}_Connectors` : 'Connectors_Data';
+                  } else if (!isAll && selectedFiles.length > 1) {
+                    filename = `Multi_Filter_${selectedFiles.length}_Files_Connectors`;
+                  } else {
+                    filename = 'All_Files_Connectors';
+                  }
+
+                  console.log('Exporting data:', dataToPrint);
+                  exportConnectorsToExcel(dataToPrint, filename);
+                }}
+                className="flex-1 bg-green-600 text-white border-none py-3 px-6 rounded-xl text-base font-semibold cursor-pointer transition-all duration-300 hover:bg-green-700 hover:shadow-[0_10px_25px_rgba(22,163,74,0.4)] active:translate-y-0 flex items-center justify-center gap-2 min-w-[200px]"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download Excel
               </button>
 
               <button

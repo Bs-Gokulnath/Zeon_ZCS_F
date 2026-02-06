@@ -392,23 +392,41 @@ export const UsageReadinessFunnelChart = ({
             // Calculate percentage (relative to preparing)
             const percentage = preparing > 0 ? ((stage.value / preparing) * 100).toFixed(0) : 0;
 
-            // Draw label and value
-            ctx.fillStyle = '#ffffff';
-            ctx.font = `bold ${14 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+            // Draw label and value with shadow for better visibility
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-
             const textY = yPos + (stageHeight / 2);
+            
+            // Add white shadow for better contrast on colored backgrounds
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.9)';
+            ctx.shadowBlur = 8 * scale;
+            ctx.shadowOffsetX = 2 * scale;
+            ctx.shadowOffsetY = 2 * scale;
+            
+            ctx.fillStyle = '#000000';
+            ctx.font = `bold ${14 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
             ctx.fillText(`${stage.label}`, funnelCenterX, textY - (8 * scale));
 
             ctx.font = `bold ${16 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
             ctx.fillText(`${stage.value}`, funnelCenterX, textY + (10 * scale));
 
-            // Draw percentage on the right
+            // Reset shadow for percentage text
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+
+            // Draw percentage on the right with shadow
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+            ctx.shadowBlur = 6 * scale;
             ctx.fillStyle = '#000000';
             ctx.font = `bold ${12 * scale}px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
             ctx.textAlign = 'left';
             ctx.fillText(`${percentage}%`, funnelCenterX + (stageWidth / 2) + (10 * scale), textY);
+            
+            // Clear shadow
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
         });
 
         // Draw title

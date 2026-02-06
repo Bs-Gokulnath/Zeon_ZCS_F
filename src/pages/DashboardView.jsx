@@ -122,7 +122,7 @@ const FunnelSection = ({ preparing, charging, negative, successful }) => {
             <text 
                 x={x + width / 2} 
                 y={y + height / 2} 
-                fill="#fff" 
+                fill="#000000" 
                 textAnchor="middle" 
                 dominantBaseline="middle"
                 fontSize={12}
