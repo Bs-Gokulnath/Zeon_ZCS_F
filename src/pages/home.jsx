@@ -721,23 +721,37 @@ export default function Home() {
                     // Custom column ordering and filtering
                     const startKey = headers.find(h => h.toUpperCase() === 'SESSION_START_TIME');
                     const endKey = headers.find(h => h.toUpperCase() === 'SESSION_END_TIME');
+                    const cpidKey = headers.find(h => h.toUpperCase() === 'CP_ID');
+                    const connectorIdKey = headers.find(h => h.toUpperCase() === 'CONNECTOR_ID');
 
                     // specific columns to remove
                     const excludedKeys = ['IS_PREPARING'];
                     headers = headers.filter(h => !excludedKeys.includes(h.toUpperCase()) && h.toUpperCase() !== 'IS_PREPARING');
 
                     const orderedHeaders = [];
-                    // Add Start Time first
+                    
+                    // Add CPID first (right after # column)
+                    if (cpidKey && headers.includes(cpidKey)) {
+                      orderedHeaders.push(cpidKey);
+                    }
+                    
+                    // Add Connector ID second
+                    if (connectorIdKey && headers.includes(connectorIdKey)) {
+                      orderedHeaders.push(connectorIdKey);
+                    }
+                    
+                    // Add Start Time third
                     if (startKey && headers.includes(startKey)) {
                       orderedHeaders.push(startKey);
                     }
-                    // Add End Time second
+                    
+                    // Add End Time fourth
                     if (endKey && headers.includes(endKey)) {
                       orderedHeaders.push(endKey);
                     }
 
                     // Add remaining columns
-                    const remainingHeaders = headers.filter(h => h !== startKey && h !== endKey);
+                    const remainingHeaders = headers.filter(h => h !== startKey && h !== endKey && h !== cpidKey && h !== connectorIdKey);
                     headers = [...orderedHeaders, ...remainingHeaders];
 
                     return (
@@ -750,11 +764,18 @@ export default function Home() {
                                 <th className="px-2 py-1 text-left text-[10px] font-bold text-white uppercase border-r border-gray-700">
                                   #
                                 </th>
-                                {headers.map((header) => (
-                                  <th key={header} className="px-2 py-1 text-left text-[10px] font-bold text-white uppercase border-r border-gray-700 last:border-r-0">
-                                    {header.replace(/_/g, ' ')}
-                                  </th>
-                                ))}
+                                {headers.map((header) => {
+                                  let displayName = header.replace(/_/g, ' ');
+                                  // Special formatting for specific columns
+                                  if (header.toUpperCase() === 'CP_ID') displayName = 'CPID';
+                                  if (header.toUpperCase() === 'CONNECTOR_ID') displayName = 'Connector ID';
+                                  
+                                  return (
+                                    <th key={header} className="px-2 py-1 text-left text-[10px] font-bold text-white uppercase border-r border-gray-700 last:border-r-0">
+                                      {displayName}
+                                    </th>
+                                  );
+                                })}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
