@@ -55,6 +55,7 @@ export const exportConnectorsToExcel = (data, filename = 'Connectors_Data') => {
     const getCPIDFromRow = (row) => {
       try {
         // First check if CPID is directly in the row object
+        if (row['cp_id']) return row['cp_id'];
         if (row['cpid']) return row['cpid'];
         if (row['CPID']) return row['CPID'];
         if (row['Charge Point id']) return row['Charge Point id'];
@@ -136,71 +137,64 @@ export const exportConnectorsToExcel = (data, filename = 'Connectors_Data') => {
         return [{ Message: `No data available for ${connectorName}` }];
       }
 
-      // Get all columns dynamically
+      console.log(`\n=== Formatting ${connectorName} with ${connectorArray.length} rows ===`);
+      
+      // Get all columns dynamically (exclude cp_id and connector_id as we handle them specially)
       let columns = getAllColumns(connectorArray);
       columns = orderColumns(columns);
       
-      console.log(`=== Processing ${connectorName} with ${connectorArray.length} rows ===`);
-      console.log('Using CPID:', cpid);
+      // Remove cp_id and connector_id from the columns array as we'll add them manually
+      columns = columns.filter(col => col !== 'cp_id' && col !== 'connector_id');
 
-      // Map the data preserving all original columns
+      // Map the data with proper column names and positioning
       return connectorArray.map((row, index) => {
-        const formattedRow = { '#': index + 1 };
+        // Extract cp_id and connector_id from the row
+        const cpidFromRow = row.cp_id;
+        const connectorIdFromRow = row.connector_id;
+        const finalCpid = cpidFromRow || cpid || '';
         
-        // Check if CPID already exists as a column in the data
-        const hasCPIDColumn = columns.some(col => 
-          col.toLowerCase() === 'cpid' || 
-          col.toLowerCase() === 'charge point id' ||
-          col.toLowerCase() === 'chargepointid'
-        );
-        
-        // Only extract CPID manually if it's NOT already in the columns
-        if (!hasCPIDColumn) {
-          // Try to extract CPID from the row
-          let rowCpid = null;
-          
-          // Check all possible CPID field variations in the row
-          const cpidFieldNames = [
-            'cpid', 'CPID', 'Cpid',
-            'Charge Point id', 'Charge Point Id', 'charge point id',
-            'chargePointId', 'charge_point_id', 'ChargePointId',
-            'CP ID', 'cp_id', 'cp id'
-          ];
-          
-          for (const fieldName of cpidFieldNames) {
-            if (row[fieldName]) {
-              rowCpid = row[fieldName];
-              break;
-            }
-          }
-          
-          // If not found in direct fields, try info field
-          if (!rowCpid && row.info) {
-            rowCpid = getCPIDFromRowInfo(row.info);
-          }
-          
-          // Last resort: use parent CPID
-          if (!rowCpid) {
-            rowCpid = cpid;
-          }
-          
-          formattedRow['cpid'] = rowCpid || '';
+        if (index === 0) {
+          console.log(`${connectorName} Row 0 - cp_id from backend: "${cpidFromRow}"`);
+          console.log(`${connectorName} Row 0 - connector_id from backend: "${connectorIdFromRow}"`);
+          console.log(`${connectorName} Row 0 - Final CPID value: "${finalCpid}"`);
         }
         
+        // Create row with EXPLICIT column order
+        const formattedRow = {};
+        
+        // Column order: #, CPID, Connector, Connector ID, then all other fields
+        formattedRow['#'] = index + 1;
+        formattedRow['CPID'] = finalCpid;
         if (includeConnectorColumn) {
           formattedRow['Connector'] = connectorName;
         }
+        formattedRow['Connector ID'] = connectorIdFromRow || '';
         
-        // Add all columns from the original data
+        // Add all other columns
         columns.forEach(column => {
-          // Format column name for display (replace underscores with spaces)
           const displayName = column.replace(/_/g, ' ');
-          formattedRow[displayName] = row[column] !== null && row[column] !== undefined ? row[column] : '';
+          let value = row[column];
+          
+          // Special handling for all_errors - format as readable string
+          if (column === 'all_errors' && Array.isArray(value) && value.length > 0) {
+            value = value.map((err, idx) => {
+              const parts = [];
+              if (err.timestamp) parts.push(`Time: ${err.timestamp}`);
+              if (err.errorCode) parts.push(`Error: ${err.errorCode}`);
+              if (err.reason) parts.push(`Reason: ${err.reason}`);
+              if (err.info) parts.push(`Info: ${err.info}`);
+              if (err.vendorErrorCode) parts.push(`Vendor: ${err.vendorErrorCode}`);
+              return `[${idx + 1}] ${parts.join(', ')}`;
+            }).join(' | ');
+          }
+          
+          formattedRow[displayName] = value !== null && value !== undefined ? value : '';
         });
         
-        // Debug first few rows
-        if (index < 3) {
-          console.log(`Row ${index} - CPID value in Excel:`, formattedRow['cpid'] || formattedRow['Charge Point id'] || 'NOT FOUND');
+        if (index === 0) {
+          console.log(`${connectorName} Row 0 - FormattedRow keys:`, Object.keys(formattedRow).slice(0, 10));
+          console.log(`${connectorName} Row 0 - CPID in formattedRow:`, formattedRow['CPID']);
+          console.log(`${connectorName} Row 0 - Connector in formattedRow:`, formattedRow['Connector']);
         }
         
         return formattedRow;
@@ -246,7 +240,40 @@ export const exportConnectorsToExcel = (data, filename = 'Connectors_Data') => {
     // Create the single combined sheet
     if (allCombinedData.length > 0) {
       console.log(`Creating single Excel sheet with ${allCombinedData.length} total rows from all connectors`);
-      const ws = XLSX.utils.json_to_sheet(allCombinedData);
+      
+      // Log first row to debug
+      console.log('First row keys:', Object.keys(allCombinedData[0]));
+      console.log('First row CPID:', allCombinedData[0]['CPID']);
+      console.log('First row data sample:', allCombinedData[0]);
+      
+      // Get all unique column headers in the correct order
+      const allHeaders = [];
+      const headerSet = new Set();
+      allCombinedData.forEach(row => {
+        Object.keys(row).forEach(key => {
+          if (!headerSet.has(key)) {
+            headerSet.add(key);
+            allHeaders.push(key);
+          }
+        });
+      });
+      
+      // Define the desired column order: #, CPID, Connector, Connector ID, then time columns, then rest
+      const priorityHeaders = ['#', 'CPID', 'Connector', 'Connector ID', 'session start time', 'session end time'];
+      
+      // Get remaining headers that are not in the priority list
+      const remainingHeaders = allHeaders.filter(h => !priorityHeaders.includes(h));
+      
+      // Combine: priority headers first (only if they exist), then remaining
+      const finalHeaders = [
+        ...priorityHeaders.filter(h => allHeaders.includes(h)),
+        ...remainingHeaders
+      ];
+      
+      console.log('Final column order:', finalHeaders);
+      
+      // Create worksheet with explicit header order
+      const ws = XLSX.utils.json_to_sheet(allCombinedData, { header: finalHeaders });
       ws['!cols'] = getColumnWidths(allCombinedData);
       XLSX.utils.book_append_sheet(workbook, ws, 'All Connectors Data');
       sheetsCreated++;
