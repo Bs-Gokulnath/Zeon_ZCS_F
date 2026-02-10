@@ -66,6 +66,124 @@ const countPrechargingFailures = (connectorArray) => {
   ).length;
 };
 
+// Helper function to draw tree structure for Charger Usage & Readiness
+const drawTreeStructure = (doc, xStart, yStart, preparing, preCharging, charging, negative, successful) => {
+  const boxWidth = 20;
+  const boxHeight = 8;
+  const verticalGap = 8;
+  const horizontalGap = 12;
+  
+  // Calculate percentages
+  const preparingPercent = 100;
+  const chargingPercent = preparing > 0 ? Math.round((charging / preparing) * 100) : 0;
+  const preChargingPercent = preparing > 0 ? Math.round((Math.max(preCharging, 0) / preparing) * 100) : 0;
+  const negativePercent = charging > 0 ? Math.round((negative / charging) * 100) : 0;
+  const positivePercent = charging > 0 ? Math.round((successful / charging) * 100) : 0;
+  
+  // Level 1: Preparing (centered)
+  const level1X = xStart + horizontalGap;
+  const level1Y = yStart;
+  
+  doc.setFillColor(59, 130, 246); // Blue
+  doc.roundedRect(level1X, level1Y, boxWidth, boxHeight, 1, 1, 'FD');
+  doc.setFontSize(5);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Preparing', level1X + boxWidth/2, level1Y + 2.5, { align: 'center' });
+  doc.setFontSize(6);
+  doc.text(String(preparing), level1X + boxWidth/2, level1Y + 5, { align: 'center' });
+  doc.setFontSize(4.5);
+  doc.text(`(${preparingPercent}%)`, level1X + boxWidth/2, level1Y + 7, { align: 'center' });
+  
+  // Connecting lines from Level 1 to Level 2
+  doc.setDrawColor(156, 163, 175);
+  doc.setLineWidth(0.3);
+  const line1StartX = level1X + boxWidth/2;
+  const line1StartY = level1Y + boxHeight;
+  const line1EndY = level1Y + boxHeight + verticalGap/2;
+  
+  // Line to Charging
+  const level2ChargeX = xStart;
+  doc.line(line1StartX, line1StartY, level2ChargeX + boxWidth/2, line1EndY);
+  doc.line(level2ChargeX + boxWidth/2, line1EndY, level2ChargeX + boxWidth/2, level1Y + boxHeight + verticalGap);
+  
+  // Line to Pre Charging
+  const level2PreChargeX = xStart + horizontalGap * 2 + boxWidth;
+  doc.line(line1StartX, line1StartY, level2PreChargeX + boxWidth/2, line1EndY);
+  doc.line(level2PreChargeX + boxWidth/2, line1EndY, level2PreChargeX + boxWidth/2, level1Y + boxHeight + verticalGap);
+  
+  // Level 2: Charging and Pre Charging
+  const level2Y = level1Y + boxHeight + verticalGap;
+  
+  // Charging box
+  doc.setFillColor(34, 197, 94); // Green
+  doc.roundedRect(level2ChargeX, level2Y, boxWidth, boxHeight, 1, 1, 'FD');
+  doc.setFontSize(5);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Charging', level2ChargeX + boxWidth/2, level2Y + 2.5, { align: 'center' });
+  doc.setFontSize(6);
+  doc.text(String(charging), level2ChargeX + boxWidth/2, level2Y + 5, { align: 'center' });
+  doc.setFontSize(4.5);
+  doc.text(`(${chargingPercent}%)`, level2ChargeX + boxWidth/2, level2Y + 7, { align: 'center' });
+  
+  // Pre Charging box
+  doc.setFillColor(168, 85, 247); // Purple
+  doc.roundedRect(level2PreChargeX, level2Y, boxWidth, boxHeight, 1, 1, 'FD');
+  doc.setFontSize(5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Pre Charging', level2PreChargeX + boxWidth/2, level2Y + 2.5, { align: 'center' });
+  doc.setFontSize(6);
+  doc.text(String(preCharging >= 0 ? preCharging : 0), level2PreChargeX + boxWidth/2, level2Y + 5, { align: 'center' });
+  doc.setFontSize(4.5);
+  doc.text(`(${preChargingPercent}%)`, level2PreChargeX + boxWidth/2, level2Y + 7, { align: 'center' });
+  
+  // Connecting lines from Charging to Level 3
+  const line2StartX = level2ChargeX + boxWidth/2;
+  const line2StartY = level2Y + boxHeight;
+  const line2EndY = level2Y + boxHeight + verticalGap/2;
+  
+  // Calculate Level 3 positions (under Charging only)
+  const level3Gap = 14;
+  const level3NegX = level2ChargeX - level3Gap;
+  const level3PosX = level2ChargeX + level3Gap;
+  
+  // Lines from Charging to Negative and Positive
+  doc.line(line2StartX, line2StartY, level3NegX + boxWidth/2, line2EndY);
+  doc.line(level3NegX + boxWidth/2, line2EndY, level3NegX + boxWidth/2, level2Y + boxHeight + verticalGap);
+  
+  doc.line(line2StartX, line2StartY, level3PosX + boxWidth/2, line2EndY);
+  doc.line(level3PosX + boxWidth/2, line2EndY, level3PosX + boxWidth/2, level2Y + boxHeight + verticalGap);
+  
+  // Level 3: Negative Stops and Positives
+  const level3Y = level2Y + boxHeight + verticalGap;
+  
+  // Negative Stops box
+  doc.setFillColor(239, 68, 68); // Red
+  doc.roundedRect(level3NegX, level3Y, boxWidth, boxHeight, 0.8, 0.8, 'FD');
+  doc.setFontSize(4.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('NegativeStops', level3NegX + boxWidth/2, level3Y + 2.5, { align: 'center' });
+  doc.setFontSize(6);
+  doc.text(String(negative), level3NegX + boxWidth/2, level3Y + 5, { align: 'center' });
+  doc.setFontSize(4.5);
+  doc.text(`(${negativePercent}%)`, level3NegX + boxWidth/2, level3Y + 7, { align: 'center' });
+  
+  // Positives box
+  doc.setFillColor(20, 184, 166); // Teal
+  doc.roundedRect(level3PosX, level3Y, boxWidth, boxHeight, 0.8, 0.8, 'FD');
+  doc.setFontSize(4.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Positives', level3PosX + boxWidth/2, level3Y + 2.5, { align: 'center' });
+  doc.setFontSize(6);
+  doc.text(String(successful), level3PosX + boxWidth/2, level3Y + 5, { align: 'center' });
+  doc.setFontSize(4.5);
+  doc.text(`(${positivePercent}%)`, level3PosX + boxWidth/2, level3Y + 7, { align: 'center' });
+  
+  // Return the height used
+  return level3Y + boxHeight - yStart;
+};
+
 // Simplified version that only renders 3 main sections (no error logs)
 const renderSimplifiedReportPage = (doc, data, title) => {
   // Set colors - Dark theme
@@ -252,29 +370,23 @@ const renderSimplifiedReportPage = (doc, data, title) => {
   doc.setTextColor(...textColor);
   yPos += 10;
 
-  // Section 1 - Usage & Readiness (Combined)
+  // Section 1 - Usage & Readiness (Combined) - Tree Structure
   createSectionHeader('1. Charger Usage & Readiness', col1X, yPos, colWidth);
   yPos += 5;
 
-  autoTable(doc, {
-    startY: yPos,
-    head: [['Metric', 'Count']],
-    body: [
-      ['Preparing', combinedPreparing],
-      ['Precharging Failure', combinedPrechargingFailure],
-      ['Charging', combinedCharging],
-      ['Positive Stops', combinedSuccessful],
-      ['Negative Stops (Errors)', combinedFailed],
-    ],
-    theme: 'grid',
-    headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
-    bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
-    columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
-    margin: { left: col1X, right: 10 },
-    tableWidth: colWidth,
-  });
-
-  yPos = doc.lastAutoTable.finalY + 3;
+  // Draw tree structure instead of table
+  const treeHeight = drawTreeStructure(
+    doc, 
+    col1X + 15, 
+    yPos + 2,
+    combinedPreparing,
+    combinedPrechargingFailure,
+    combinedCharging,
+    combinedFailed,
+    combinedSuccessful
+  );
+  
+  yPos += treeHeight + 7;
 
   // Section 2 - Authentication (Combined)
   createSectionHeader('2. Authentication Method', col1X, yPos, colWidth);
@@ -368,29 +480,23 @@ const renderSimplifiedReportPage = (doc, data, title) => {
     const connectorKey = report.key === 'report_1' ? 'Connector1' : 'Connector2';
     const prechargingFailure = countPrechargingFailures(data[connectorKey]);
 
-    // Section 1 - Usage
+    // Section 1 - Usage - Tree Structure
     createSectionHeader('1. Charger Usage & Readiness', report.colX, connectorY, colWidth);
     connectorY += 5;
 
-    autoTable(doc, {
-      startY: connectorY,
-      head: [['Metric', 'Count']],
-      body: [
-        ['Preparing', report.data['Preparing Sessions'] || 0],
-        ['Precharging Failure', prechargingFailure],
-        ['Charging', report.data['Charging Sessions'] || 0],
-        ['Positive Stops', report.data['Successful Sessions'] || 0],
-        ['Negative Stops (Errors)', report.data['Failed / Error Stops'] || 0],
-      ],
-      theme: 'grid',
-      headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
-      bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
-      columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
-      margin: { left: report.colX },
-      tableWidth: colWidth,
-    });
-
-    connectorY = doc.lastAutoTable.finalY + 3;
+    // Draw tree structure instead of table
+    const connectorTreeHeight = drawTreeStructure(
+      doc, 
+      report.colX + 15, 
+      connectorY + 2,
+      report.data['Preparing Sessions'] || 0,
+      prechargingFailure,
+      report.data['Charging Sessions'] || 0,
+      report.data['Failed / Error Stops'] || 0,
+      report.data['Successful Sessions'] || 0
+    );
+    
+    connectorY += connectorTreeHeight + 7;
 
     // Section 2 - Authentication
     createSectionHeader('2. Authentication Method', report.colX, connectorY, colWidth);
@@ -867,29 +973,23 @@ const renderReportPage = (doc, data, title) => {
    doc.setTextColor(...textColor); // Reset
    yPos += 10;
  
-   // Section 1 - Usage & Readiness (Combined)
+   // Section 1 - Usage & Readiness (Combined) - Tree Structure
    createSectionHeader('1. Charger Usage & Readiness', col1X, yPos, colWidth);
    yPos += 5;
  
-   autoTable(doc, {
-     startY: yPos,
-     head: [['Metric', 'Count']],
-     body: [
-       ['Preparing', combinedPreparing],
-       ['Precharging Failure', combinedPrechargingFailure],
-       ['Charging', combinedCharging],
-       ['Positive Stops', combinedSuccessful],
-       ['Negative Stops (Errors)', combinedFailed],
-     ],
-     theme: 'grid',
-     headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
-     bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
-     columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
-     margin: { left: col1X, right: 10 },
-     tableWidth: colWidth,
-   });
- 
-   yPos = doc.lastAutoTable.finalY + 3;
+   // Draw tree structure instead of table
+   const fullReportTreeHeight = drawTreeStructure(
+     doc, 
+     col1X + 15, 
+     yPos + 2,
+     combinedPreparing,
+     combinedPrechargingFailure,
+     combinedCharging,
+     combinedFailed,
+     combinedSuccessful
+   );
+   
+   yPos += fullReportTreeHeight + 7;
 
   // Section 2 - Authentication (Combined)
   createSectionHeader('2. Authentication Method', col1X, yPos, colWidth);
@@ -988,29 +1088,23 @@ const renderReportPage = (doc, data, title) => {
     const connectorKey = report.key === 'report_1' ? 'Connector1' : 'Connector2';
     const prechargingFailure = countPrechargingFailures(data[connectorKey]);
 
-    // Section 1 - Usage
+    // Section 1 - Usage - Tree Structure
     createSectionHeader('1. Charger Usage & Readiness', report.colX, connectorY, colWidth);
     connectorY += 5;
 
-    autoTable(doc, {
-      startY: connectorY,
-      head: [['Metric', 'Count']],
-      body: [
-        ['Preparing', report.data['Preparing Sessions'] || 0],
-        ['Precharging Failure', prechargingFailure],
-        ['Charging', report.data['Charging Sessions'] || 0],
-        ['Positive Stops', report.data['Successful Sessions'] || 0],
-        ['Negative Stops (Errors)', report.data['Failed / Error Stops'] || 0],
-      ],
-      theme: 'grid',
-      headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 5, fontStyle: 'bold', halign: 'left', cellPadding: 0.5, minCellHeight: 4 },
-      bodyStyles: { fontSize: 5, textColor: textColor, cellPadding: 0.5, minCellHeight: 4 },
-      columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 30, halign: 'left' } },
-      margin: { left: report.colX },
-      tableWidth: colWidth,
-    });
-
-    connectorY = doc.lastAutoTable.finalY + 3;
+    // Draw tree structure instead of table
+    const fullReportConnectorTreeHeight = drawTreeStructure(
+      doc, 
+      report.colX + 15, 
+      connectorY + 2,
+      report.data['Preparing Sessions'] || 0,
+      prechargingFailure,
+      report.data['Charging Sessions'] || 0,
+      report.data['Failed / Error Stops'] || 0,
+      report.data['Successful Sessions'] || 0
+    );
+    
+    connectorY += fullReportConnectorTreeHeight + 7;
 
     // Section 2 - Authentication
     createSectionHeader('2. Authentication Method', report.colX, connectorY, colWidth);
@@ -1462,7 +1556,7 @@ const renderCombinedSummaryPage = (doc, data, title) => {
   
   currentY += 20;
 
-  // Section 1: Charger Usage & Readiness
+  // Section 1: Charger Usage & Readiness - Tree Structure
   doc.setFillColor(...darkBg);
   doc.rect(20, currentY, 260, 8, 'F');
   doc.setFontSize(10);
@@ -1471,24 +1565,19 @@ const renderCombinedSummaryPage = (doc, data, title) => {
   doc.text('1. Charger Usage & Readiness', 25, currentY + 5.5);
   currentY += 10;
 
-  autoTable(doc, {
-    startY: currentY,
-    head: [['Metric', 'Count']],
-    body: [
-      ['Preparing', combinedPreparing],
-      ['Precharging Failure', combinedPrechargingFailure],
-      ['Charging Sessions', combinedCharging],
-      ['Positive Stops', combinedSuccessful],
-      ['Negative Stops (Errors)', combinedFailed],
-    ],
-    theme: 'grid',
-    headStyles: { fillColor: darkBg, textColor: whiteText, fontSize: 9, fontStyle: 'bold', halign: 'center' },
-    bodyStyles: { fontSize: 9, textColor: textColor },
-    columnStyles: { 0: { cellWidth: 180, halign: 'left' }, 1: { cellWidth: 80, halign: 'center' } },
-    margin: { left: 20, right: 20 },
-  });
-
-  currentY = doc.lastAutoTable.finalY + 8;
+  // Draw tree structure instead of table
+  const combinedReportTreeHeight = drawTreeStructure(
+    doc, 
+    90, 
+    currentY + 2,
+    combinedPreparing,
+    combinedPrechargingFailure,
+    combinedCharging,
+    combinedFailed,
+    combinedSuccessful
+  );
+  
+  currentY += combinedReportTreeHeight + 12;
 
   // Section 2: Authentication Method
   doc.setFillColor(...darkBg);
