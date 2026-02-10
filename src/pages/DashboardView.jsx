@@ -3,11 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line, XAxis, YAxis, CartesianGrid,
-    FunnelChart, Funnel, LabelList,
-    BarChart, Bar
+    BarChart, Bar, LabelList
 } from 'recharts';
-import { X, Filter, BarChart3, Zap, Activity, CircleDot, Plug, Layers, RefreshCw } from 'lucide-react';
+import { X, Filter, BarChart3, Zap, Activity, CircleDot, Plug, Layers, RefreshCw, Download } from 'lucide-react';
 import MultiSelectDropdown from '../components/MultiSelectDropdown';
+import { exportDashboardAnalytics } from '../utils/excelExporter';
 
 import zeonLogo from '../assets/zeon_charging.webp';
 
@@ -83,95 +83,85 @@ const COLORS = {
 
 const PIE_COLORS = [COLORS.blue, COLORS.green, COLORS.orange];
 
-// Funnel Chart
-const FunnelSection = ({ preparing, charging, negative, successful }) => {
+// Tree Chart (replacing Funnel Chart)
+const TreeSection = ({ preparing, charging, negative, successful }) => {
     // PDF Logic: Success Rate = Successful Sessions / Charging Sessions
     const totalForRate = charging;
     const rate = totalForRate > 0 ? Math.round((successful / totalForRate) * 100) : 0;
     const isGood = rate >= 70;
+    
+    // Calculate preCharging (sessions that didn't reach charging)
+    const preCharging = preparing - charging;
 
-    // Calculate total for percentage calculation
-    const total = preparing + charging + negative;
-
-    const data = [
-        { 
-            name: 'Preparing', 
-            value: preparing, 
-            fill: COLORS.blue,
-            percentage: total > 0 ? Math.round((preparing / total) * 100) : 0
-        },
-        { 
-            name: 'Charging', 
-            value: charging, 
-            fill: COLORS.green,
-            percentage: total > 0 ? Math.round((charging / total) * 100) : 0
-        },
-        { 
-            name: 'Negative Stops', 
-            value: negative, 
-            fill: COLORS.red,
-            percentage: total > 0 ? Math.round((negative / total) * 100) : 0
-        },
-    ].sort((a, b) => b.value - a.value);
-
-    // Custom label renderer to show value and percentage
-    const renderCenterLabel = (props) => {
-        const { x, y, width, height, index } = props;
-        const entry = data[index];
-        return (
-            <text 
-                x={x + width / 2} 
-                y={y + height / 2} 
-                fill="#000000" 
-                textAnchor="middle" 
-                dominantBaseline="middle"
-                fontSize={12}
-                fontWeight="bold"
-            >
-                {`${entry.value} (${entry.percentage}%)`}
-            </text>
-        );
-    };
-
-    // Custom label renderer for right side with hover title
-    const renderRightLabel = (props) => {
-        const { x, y, width, height, index } = props;
-        const entry = data[index];
-        return (
-            <text 
-                x={x + width + 5} 
-                y={y + height / 2} 
-                fill="#4B5563" 
-                textAnchor="start" 
-                dominantBaseline="middle"
-                fontSize={10}
-                fontWeight="normal"
-                style={{ cursor: 'pointer' }}
-            >
-                <title>{`${entry.name}: ${entry.value} (${entry.percentage}%)`}</title>
-                {entry.name}
-            </text>
-        );
-    };
+    // Percentage calculations based on hierarchy
+    // Level 1: Preparing is always 100%
+    const preparingPercent = 100;
+    
+    // Level 2: Charging and Pre Charging as percentage of Preparing (should add to 100%)
+    const chargingPercent = preparing > 0 ? Math.round((charging / preparing) * 100) : 0;
+    const preChargingPercent = preparing > 0 ? Math.round((Math.max(preCharging, 0) / preparing) * 100) : 0;
+    
+    // Level 3: Negative Stops and Positives as percentage of Charging (should add to 100%)
+    const negativePercent = charging > 0 ? Math.round((negative / charging) * 100) : 0;
+    const positivePercent = charging > 0 ? Math.round((successful / charging) * 100) : 0;
 
     return (
-        <div className="flex flex-col h-full">
-            <div className="flex-1 min-h-0">
-                <ResponsiveContainer width="100%" height="100%">
-                    <FunnelChart>
-                        <Tooltip content={<CustomTooltip />} />
-                        <Funnel
-                            dataKey="value"
-                            data={data}
-                            isAnimationActive
-                        >
-                            <LabelList position="right" content={renderRightLabel} />
-                            <LabelList position="center" content={renderCenterLabel} />
-                        </Funnel>
-                    </FunnelChart>
-                </ResponsiveContainer>
+        <div className="flex flex-col h-full justify-evenly py-1">
+            {/* Level 1: Preparing */}
+            <div className="flex justify-center mb-1">
+                <div className="bg-blue-500 text-white rounded-xl px-4 py-1.5 text-center shadow-md min-w-[100px]">
+                    <div className="text-[10px] font-semibold">Preparing</div>
+                    <div className="text-base font-bold">{preparing}</div>
+                    <div className="text-xs font-medium">({preparingPercent}%)</div>
+                </div>
             </div>
-            <div className={`text-xs font-bold text-center mt-1 ${isGood ? 'text-green-600' : 'text-red-600'}`}>
+
+            {/* Connecting Lines */}
+            <div className="flex justify-center mb-0.5">
+                <svg width="140" height="18" className="overflow-visible">
+                    <line x1="70" y1="0" x2="35" y2="18" stroke="#9CA3AF" strokeWidth="1.5"/>
+                    <line x1="70" y1="0" x2="105" y2="18" stroke="#9CA3AF" strokeWidth="1.5"/>
+                </svg>
+            </div>
+
+            {/* Level 2: Charging and Pre Charging */}
+            <div className="flex justify-center gap-4 mb-1">
+                <div className="bg-green-500 text-white rounded-lg px-3 py-1 text-center shadow-sm min-w-[85px]">
+                    <div className="text-[9px] font-semibold">Charging</div>
+                    <div className="text-sm font-bold">{charging}</div>
+                    <div className="text-[10px] font-medium">({chargingPercent}%)</div>
+                </div>
+                <div className="bg-purple-500 text-white rounded-lg px-3 py-1 text-center shadow-sm min-w-[85px]">
+                    <div className="text-[9px] font-semibold">Pre Charging</div>
+                    <div className="text-sm font-bold">{preCharging >= 0 ? preCharging : 0}</div>
+                    <div className="text-[10px] font-medium">({preChargingPercent}%)</div>
+                </div>
+            </div>
+
+            {/* Connecting Lines for Charging branches */}
+            <div className="flex justify-start ml-[20%] mb-0.5">
+                <svg width="80" height="15" className="overflow-visible">
+                    <line x1="40" y1="0" x2="15" y2="15" stroke="#9CA3AF" strokeWidth="1.5"/>
+                    <line x1="40" y1="0" x2="65" y2="15" stroke="#9CA3AF" strokeWidth="1.5"/>
+                </svg>
+            </div>
+
+            {/* Level 3: Negative Stops and Positives (under Charging only) */}
+            <div className="flex justify-start ml-[8%] gap-3 mb-1">
+                <div className="bg-red-500 text-white rounded-md px-3 py-1 text-center shadow-sm min-w-[75px]">
+                    <div className="text-[8px] font-semibold">NegativeStops</div>
+                    <div className="text-xs font-bold">{negative}</div>
+                    <div className="text-[9px] font-medium">({negativePercent}%)</div>
+                </div>
+                <div className="bg-teal-500 text-white rounded-md px-3 py-1 text-center shadow-sm min-w-[75px]">
+                    <div className="text-[8px] font-semibold">Positives</div>
+                    <div className="text-xs font-bold">{successful}</div>
+                    <div className="text-[9px] font-medium">({positivePercent}%)</div>
+                </div>
+            </div>
+
+            {/* Success Rate at bottom */}
+            <div className={`text-[10px] font-bold text-center mt-1 ${isGood ? 'text-green-600' : 'text-red-600'}`}>
                 Success Rate: {rate}% ({successful} / {totalForRate})
             </div>
         </div>
@@ -514,6 +504,67 @@ const processNetworkPerformanceByStation = (allResults) => {
         preparing,
         charging,
         negative
+    }));
+
+    // Sort by value (highest negative stop % first)
+    return chartData.sort((a, b) => b.value - a.value);
+};
+
+// Process Network Performance by CPID (Negative Stop %)
+const processNetworkPerformanceByCPID = (allResults) => {
+    if (!allResults || Object.keys(allResults).length === 0) return [];
+
+    const stats = {};
+
+    // Iterate over all files in allResults
+    Object.entries(allResults).forEach(([key, data]) => {
+        // Skip if key is 'All Files'
+        if (key === 'All Files') return;
+
+        // Extract CPID with better field checking
+        let cpid = 'Unknown';
+        try {
+            if (data.info) {
+                let info = data.info;
+                if (typeof info === 'string') info = JSON.parse(info);
+                if (Array.isArray(info) && info.length > 0) {
+                    // Try multiple field names for CPID (using exact field names from data)
+                    cpid = info[0]['Charge Point id'] || 
+                           info[0]['Charge Point Id'] || 
+                           info[0]['chargePointId'] || 
+                           info[0]['CPID'] || 
+                           info[0]['CP ID'] ||
+                           'Unknown';
+                }
+            }
+        } catch (e) { 
+            console.error('Error extracting CPID:', e);
+        }
+        
+        // Clean and normalize CPID
+        cpid = String(cpid).trim();
+        if (!cpid || cpid === 'Unknown' || cpid === '') {
+            cpid = 'UNKNOWN';
+        }
+
+        // Extract Counts
+        const t1 = (data.report_1?.['Charging Sessions'] || 0);
+        const n1 = (data.report_1?.['Failed / Error Stops'] || 0);
+        const t2 = (data.report_2?.['Charging Sessions'] || 0);
+        const n2 = (data.report_2?.['Failed / Error Stops'] || 0);
+
+        if (!stats[cpid]) {
+            stats[cpid] = { total: 0, negative: 0 };
+        }
+        stats[cpid].total += t1 + t2;
+        stats[cpid].negative += n1 + n2;
+    });
+
+    // Create chart data from CPID stats
+    const chartData = Object.entries(stats).map(([name, { total, negative }]) => ({
+        name,
+        value: total > 0 ? Math.round((negative / total) * 100) : 0,
+        fill: '#7C3AED' // Purple-600
     }));
 
     // Sort by value (highest negative stop % first)
@@ -1116,6 +1167,9 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
     // Network Performance by Station Data - using filtered data
     const stationPerformanceData = processNetworkPerformanceByStation(filteredAllResultsForCharts);
     
+    // Network Performance by CPID Data - using filtered data
+    const cpidPerformanceData = processNetworkPerformanceByCPID(filteredAllResultsForCharts);
+    
     // Precharging Failure by OEM Data - using filtered data
     const prechargingFailureData = processPrechargingFailureByOEM(filteredAllResultsForCharts);
     
@@ -1229,6 +1283,22 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                     </button>
 
                     <button
+                        onClick={() => {
+                            exportDashboardAnalytics({
+                                networkByOEM: networkData,
+                                networkByStation: stationPerformanceData,
+                                networkByCPID: cpidPerformanceData,
+                                prechargingByOEM: prechargingFailureData,
+                                prechargingByStation: prechargingFailureByStationData
+                            });
+                        }}
+                        className="p-1.5 hover:bg-green-50 text-gray-500 hover:text-green-600 rounded-full transition-colors"
+                        title="Export Analytics to Excel"
+                    >
+                        <Download className="w-5 h-5" />
+                    </button>
+
+                    <button
                         onClick={onClose}
                         className="p-1.5 hover:bg-red-50 text-gray-500 hover:text-red-600 rounded-full transition-colors"
                         title="Close"
@@ -1242,20 +1312,20 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
             <div className="flex-1 p-3 overflow-y-auto bg-gray-100">
                 <div className="flex flex-col gap-3">
                     {/* Row 1: Charger Usage (3 cols) + Charging Shares (1 col) */}
-                    <div className="grid grid-cols-4 gap-3 h-[280px]">
+                    <div className="grid grid-cols-4 gap-3 h-[380px]">
                         <DashboardCard title="Charger Usage & Readiness" borderColorClass="border-blue-600" icon={Zap} className="col-span-3">
                             <div className="grid grid-cols-3 gap-0 h-full">
                                 <div className="h-full px-2 border-r border-gray-200 flex flex-col pt-2">
                                     <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Combined Charger</h4>
-                                    <div className="flex-1 min-h-0"><FunnelSection {...funnelData.combined} /></div>
+                                    <div className="flex-1 min-h-0"><TreeSection {...funnelData.combined} /></div>
                                 </div>
                                 <div className="h-full px-2 border-r border-gray-200 flex flex-col pt-2">
                                     <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Connector 1</h4>
-                                    <div className="flex-1 min-h-0"><FunnelSection {...funnelData.c1} /></div>
+                                    <div className="flex-1 min-h-0"><TreeSection {...funnelData.c1} /></div>
                                 </div>
                                 <div className="h-full px-2 flex flex-col pt-2">
                                     <h4 className="text-xs font-bold text-gray-500 uppercase text-center mb-1">Connector 2</h4>
-                                    <div className="flex-1 min-h-0"><FunnelSection {...funnelData.c2} /></div>
+                                    <div className="flex-1 min-h-0"><TreeSection {...funnelData.c2} /></div>
                                 </div>
                             </div>
                         </DashboardCard>
@@ -1377,43 +1447,88 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                     {/* Row 3: Network Performance by Station (Full Width) */}
                     <div className="grid grid-cols-1 gap-3 h-[280px]">
                         <DashboardCard title="2. Network Performance by Station (Neg Stop%)" borderColorClass="border-red-600" icon={Layers}>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={stationPerformanceData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                                    <XAxis
-                                        dataKey="name"
-                                        tick={{ fontSize: 9, fontWeight: 'bold' }}
-                                        axisLine={false}
-                                        tickLine={false}
-                                        dy={10}
-                                        interval={0}
-                                        angle={-45}
-                                        textAnchor="end"
-                                    />
-                                    <YAxis hide />
-                                    <Tooltip cursor={{ fill: '#FEE2E2', stroke: 'none' }} content={<CustomTooltip />} />
-                                    <Bar 
-                                        dataKey="value" 
-                                        radius={[6, 6, 0, 0]}
-                                        isAnimationActive={false}
-                                    >
-                                        <LabelList 
-                                            dataKey="value" 
-                                            position="top" 
-                                            fill="#000" 
-                                            fontSize={10} 
-                                            fontWeight="bold" 
-                                            formatter={(val) => `${val}%`}
-                                        />
-                                    </Bar>
-                                </BarChart>
-                            </ResponsiveContainer>
+                            <div className={stationPerformanceData.length > 15 ? "overflow-x-auto h-full" : "h-full"}>
+                                <div style={{ minWidth: stationPerformanceData.length > 15 ? `${stationPerformanceData.length * 60}px` : '100%', height: '100%' }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={stationPerformanceData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                            <XAxis
+                                                dataKey="name"
+                                                tick={{ fontSize: 9, fontWeight: 'bold' }}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                dy={10}
+                                                interval={0}
+                                                angle={-45}
+                                                textAnchor="end"
+                                            />
+                                            <YAxis hide />
+                                            <Tooltip cursor={{ fill: '#FEE2E2', stroke: 'none' }} content={<CustomTooltip />} />
+                                            <Bar 
+                                                dataKey="value" 
+                                                radius={[6, 6, 0, 0]}
+                                                isAnimationActive={false}
+                                            >
+                                                <LabelList 
+                                                    dataKey="value" 
+                                                    position="top" 
+                                                    fill="#000" 
+                                                    fontSize={10} 
+                                                    fontWeight="bold" 
+                                                    formatter={(val) => `${val}%`}
+                                                />
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
                         </DashboardCard>
                     </div>
 
-                    {/* Row 4: Precharging Failure by OEM (Full Width) */}
+                    {/* Row 4: Network Performance by CPID (Full Width) */}
                     <div className="grid grid-cols-1 gap-3 h-[280px]">
-                        <DashboardCard title="3. Precharging Failure by OEM" borderColorClass="border-orange-500" icon={Layers}>
+                        <DashboardCard title="3. Network Performance by CPID (Neg Stop%)" borderColorClass="border-purple-600" icon={Layers}>
+                            <div className={cpidPerformanceData.length > 15 ? "overflow-x-auto h-full" : "h-full"}>
+                                <div style={{ minWidth: cpidPerformanceData.length > 15 ? `${cpidPerformanceData.length * 60}px` : '100%', height: '100%' }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={cpidPerformanceData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                            <XAxis
+                                                dataKey="name"
+                                                tick={{ fontSize: 9, fontWeight: 'bold' }}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                dy={10}
+                                                interval={0}
+                                                angle={-45}
+                                                textAnchor="end"
+                                            />
+                                            <YAxis hide />
+                                            <Tooltip cursor={{ fill: '#F3E8FF', stroke: 'none' }} content={<CustomTooltip />} />
+                                            <Bar 
+                                                dataKey="value" 
+                                                radius={[6, 6, 0, 0]}
+                                                isAnimationActive={false}
+                                            >
+                                                <LabelList 
+                                                    dataKey="value" 
+                                                    position="top" 
+                                                    fill="#000" 
+                                                    fontSize={10} 
+                                                    fontWeight="bold" 
+                                                    formatter={(val) => `${val}%`}
+                                                />
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </DashboardCard>
+                    </div>
+
+                    {/* Row 5: Precharging Failure by OEM (Full Width) */}
+                    <div className="grid grid-cols-1 gap-3 h-[280px]">
+                        <DashboardCard title="4. Precharging Failure by OEM" borderColorClass="border-orange-500" icon={Layers}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={prechargingFailureData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -1449,7 +1564,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
 
                     {/* Row 5: Precharging Failure by Station (Full Width) */}
                     <div className="grid grid-cols-1 gap-3 h-[280px]">
-                        <DashboardCard title="4. Precharging Failure by Station" borderColorClass="border-purple-500" icon={Layers}>
+                        <DashboardCard title="5. Precharging Failure by Station" borderColorClass="border-purple-500" icon={Layers}>
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={prechargingFailureByStationData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -1485,7 +1600,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
 
                     {/* Row 6: Power Quality (3 cols) + Auth Methods (1 col) */}
                     <div className="grid grid-cols-4 gap-3 h-[280px]">
-                        <DashboardCard title="5. Power Quality" borderColorClass="border-green-500" icon={Activity} className="col-span-3">
+                        <DashboardCard title="6. Power Quality" borderColorClass="border-green-500" icon={Activity} className="col-span-3">
                             <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={lineData} margin={{ top: 10, right: 60, left: 20, bottom: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />

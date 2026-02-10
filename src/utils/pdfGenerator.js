@@ -1,6 +1,63 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+// Helper function to calculate actual date range from session data
+const calculateDateRange = (data) => {
+  try {
+    let allDates = [];
+    
+    // Collect all session start times from both connectors
+    if (Array.isArray(data.Connector1)) {
+      data.Connector1.forEach(row => {
+        if (row.session_start_time) allDates.push(new Date(row.session_start_time));
+        if (row.SESSION_START_TIME) allDates.push(new Date(row.SESSION_START_TIME));
+      });
+    }
+    
+    if (Array.isArray(data.Connector2)) {
+      data.Connector2.forEach(row => {
+        if (row.session_start_time) allDates.push(new Date(row.session_start_time));
+        if (row.SESSION_START_TIME) allDates.push(new Date(row.SESSION_START_TIME));
+      });
+    }
+    
+    // Check all connector keys dynamically
+    Object.keys(data).forEach(key => {
+      if (Array.isArray(data[key]) && !key.startsWith('report_') && key !== 'info' && key !== 'date') {
+        data[key].forEach(row => {
+          if (row.session_start_time) allDates.push(new Date(row.session_start_time));
+          if (row.SESSION_START_TIME) allDates.push(new Date(row.SESSION_START_TIME));
+        });
+      }
+    });
+    
+    if (allDates.length === 0) return null;
+    
+    // Filter out invalid dates
+    allDates = allDates.filter(d => !isNaN(d.getTime()));
+    
+    if (allDates.length === 0) return null;
+    
+    const minDate = new Date(Math.min(...allDates));
+    const maxDate = new Date(Math.max(...allDates));
+    
+    const formatDate = (date) => {
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = date.getFullYear();
+      return `${day}/${month}/${year}`;
+    };
+    
+    return {
+      start_date: formatDate(minDate),
+      end_date: formatDate(maxDate)
+    };
+  } catch (e) {
+    console.error('Error calculating date range:', e);
+    return null;
+  }
+};
+
 // Helper function to count Precharging Failures from raw connector data
 const countPrechargingFailures = (connectorArray) => {
   if (!Array.isArray(connectorArray)) return 0;
@@ -86,9 +143,13 @@ const renderSimplifiedReportPage = (doc, data, title) => {
       currentY += 3;
     }
     
-    if (data.date && (data.date.start_date || data.date.end_date)) {
+    // Calculate actual date range from session data
+    const calculatedDateRange = calculateDateRange(data);
+    const dateRange = calculatedDateRange || data.date;
+    
+    if (dateRange && (dateRange.start_date || dateRange.end_date)) {
       doc.setFont('helvetica', 'bold');
-      doc.text(`Period: ${data.date.start_date || 'N/A'} - ${data.date.end_date || 'N/A'}`, 150, currentY, { align: 'center' });
+      doc.text(`Data: ${dateRange.start_date || 'N/A'} - ${dateRange.end_date || 'N/A'}`, 150, currentY, { align: 'center' });
       currentY += 4;
     }
   }
@@ -493,12 +554,15 @@ const renderReportPage = (doc, data, title) => {
       currentY += 3;
     }
     
-    // Display date range
-    if (data.date && (data.date.start_date || data.date.end_date)) {
-      const startDate = data.date.start_date || 'N/A';
-      const endDate = data.date.end_date || 'N/A';
+    // Display date range - calculated from actual session data
+    const calculatedDateRange = calculateDateRange(data);
+    const dateRange = calculatedDateRange || data.date;
+    
+    if (dateRange && (dateRange.start_date || dateRange.end_date)) {
+      const startDate = dateRange.start_date || 'N/A';
+      const endDate = dateRange.end_date || 'N/A';
       doc.setFont('helvetica', 'bold');
-      doc.text(`Period: ${startDate} - ${endDate}`, 150, currentY, { align: 'center' });
+      doc.text(`Data: ${startDate} - ${endDate}`, 150, currentY, { align: 'center' });
       currentY += 4;
     }
   }
@@ -1307,8 +1371,12 @@ const renderCombinedSummaryPage = (doc, data, title) => {
     }
     
     if (data.date && (data.date.start_date || data.date.end_date)) {
+      // Calculate actual date range from session data
+      const calculatedDateRange = calculateDateRange(data);
+      const dateRange = calculatedDateRange || data.date;
+      
       doc.setFont('helvetica', 'bold');
-      doc.text(`Period: ${data.date.start_date || 'N/A'} - ${data.date.end_date || 'N/A'}`, 150, currentY, { align: 'center' });
+      doc.text(`Data: ${dateRange.start_date || 'N/A'} - ${dateRange.end_date || 'N/A'}`, 150, currentY, { align: 'center' });
       currentY += 6;
     }
   }
