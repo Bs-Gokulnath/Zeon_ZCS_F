@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import JSZip from 'jszip';
 import { generateChargerHealthPDF } from '../utils/pdfGenerator';
-import { exportConnectorsToExcel } from '../utils/excelExporter';
+import { exportConnectorsToExcel, exportConnectorsToCSV } from '../utils/excelExporter';
 import zeonLogo from '../assets/zeon_charging.webp';
 import DashboardView from './DashboardView';
 import { AuthenticationPieChart, UsageReadinessFunnelChart, PowerQualityLineChart } from './report_graphs';
@@ -344,14 +344,14 @@ export default function Home() {
       if (typeof info === 'string') info = JSON.parse(info);
       if (Array.isArray(info) && info.length > 0) {
         // Try multiple possible field names for station
-        return info[0]['Station Alias Name'] || 
-               info[0]['Station Name'] || 
-               info[0]['stationName'] || 
-               info[0]['Station'] || 
-               info[0]['station_name'] || 
-               info[0]['StationName'] ||
-               info[0]['Station Identity'] ||
-               null;
+        return info[0]['Station Alias Name'] ||
+          info[0]['Station Name'] ||
+          info[0]['stationName'] ||
+          info[0]['Station'] ||
+          info[0]['station_name'] ||
+          info[0]['StationName'] ||
+          info[0]['Station Identity'] ||
+          null;
       }
     } catch (e) {
       console.error('Error getting station name:', e);
@@ -363,10 +363,10 @@ export default function Home() {
   const getDisplayLabel = (data, fileName) => {
     const cpId = getCPID(data);
     const stationName = getStationName(data);
-    
+
     // Debug log to see what we're getting
     console.log('Display Label Debug:', { fileName, cpId, stationName, info: data?.info });
-    
+
     if (stationName && cpId) {
       return `${stationName} - ${cpId}`;
     } else if (cpId) {
@@ -382,7 +382,7 @@ export default function Home() {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = '.xlsx,.xls,.csv';
-    
+
     fileInput.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -474,7 +474,7 @@ export default function Home() {
                 <span className={`text-xs font-semibold transition-colors ${selectedMode === 'S3' ? 'text-orange-600' : 'text-gray-400'}`}>
                   S3
                 </span>
-                
+
                 {/* Update CP Report Button */}
                 <button
                   onClick={handleUpdateCPReport}
@@ -495,7 +495,7 @@ export default function Home() {
                   )}
                 </button>
               </div>
-              
+
               {/* CP Report Message */}
               {cpReportMessage && (
                 <div className={`text-xs font-medium px-3 py-1.5 rounded-lg ${cpReportMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
@@ -586,17 +586,17 @@ export default function Home() {
                 </div>
                 <span className="text-2xl font-bold text-red-600">{uploadProgress}%</span>
               </div>
-              
+
               {/* Progress Bar Section */}
               <div className="px-6 py-4">
                 <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden shadow-inner">
-                  <div 
+                  <div
                     className="h-full bg-gradient-to-r from-red-500 to-red-600 transition-all duration-300 ease-out"
                     style={{ width: `${uploadProgress}%` }}
                   ></div>
                 </div>
               </div>
-              
+
               {/* File Progress Info Section */}
               {totalFiles > 0 && (
                 <div className="px-6 pb-4 space-y-2">
@@ -729,22 +729,22 @@ export default function Home() {
                     headers = headers.filter(h => !excludedKeys.includes(h.toUpperCase()) && h.toUpperCase() !== 'IS_PREPARING');
 
                     const orderedHeaders = [];
-                    
+
                     // Add CPID first (right after # column)
                     if (cpidKey && headers.includes(cpidKey)) {
                       orderedHeaders.push(cpidKey);
                     }
-                    
+
                     // Add Connector ID second
                     if (connectorIdKey && headers.includes(connectorIdKey)) {
                       orderedHeaders.push(connectorIdKey);
                     }
-                    
+
                     // Add Start Time third
                     if (startKey && headers.includes(startKey)) {
                       orderedHeaders.push(startKey);
                     }
-                    
+
                     // Add End Time fourth
                     if (endKey && headers.includes(endKey)) {
                       orderedHeaders.push(endKey);
@@ -769,7 +769,7 @@ export default function Home() {
                                   // Special formatting for specific columns
                                   if (header.toUpperCase() === 'CP_ID') displayName = 'CPID';
                                   if (header.toUpperCase() === 'CONNECTOR_ID') displayName = 'Connector ID';
-                                  
+
                                   return (
                                     <th key={header} className="px-2 py-1 text-left text-[10px] font-bold text-white uppercase border-r border-gray-700 last:border-r-0">
                                       {displayName}
@@ -848,7 +848,7 @@ export default function Home() {
               <button
                 onClick={() => {
                   const isAll = selectedFiles.includes('All Files') || selectedFiles.length === 0;
-                  
+
                   // Get the correct data structure for export
                   let dataToPrint;
                   if (isAll) {
@@ -870,7 +870,7 @@ export default function Home() {
                   }
 
                   console.log('Exporting data:', dataToPrint);
-                  exportConnectorsToExcel(dataToPrint, filename);
+                  exportConnectorsToCSV(dataToPrint, filename);
                 }}
                 className="flex-1 bg-green-600 text-white border-none py-3 px-6 rounded-xl text-base font-semibold cursor-pointer transition-all duration-300 hover:bg-green-700 hover:shadow-[0_10px_25px_rgba(22,163,74,0.4)] active:translate-y-0 flex items-center justify-center gap-2 min-w-[200px]"
               >
@@ -879,7 +879,7 @@ export default function Home() {
                   <polyline points="7 10 12 15 17 10" />
                   <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
-                Download Excel
+                Download CSV
               </button>
 
               <button

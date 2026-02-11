@@ -1635,6 +1635,9 @@ export const generateChargerHealthPDF = (data, filename = "Charger_Health_Report
   // Use LANDSCAPE orientation for single page
   const doc = new jsPDF('landscape');
   
+  // Save the TRUE original addPage function at the very beginning
+  const trueOriginalAddPage = doc.addPage.bind(doc);
+  
   // Check if this is a multi-file object
   const isMultiFile = filename === 'Combined_Report' && data && !data.report_1;
 
@@ -1649,18 +1652,28 @@ export const generateChargerHealthPDF = (data, filename = "Charger_Health_Report
      const allFilesData = data['All Files'];
      if (allFilesData) {
         renderSimplifiedReportPage(doc, allFilesData, `Combined Report - All ${keys.length} Chargers`);
+        // Restore the original addPage function
+        doc.addPage = trueOriginalAddPage;
         doc.addPage();
      }
 
      // Subsequent pages: Individual charger reports (full 3 columns with all sections including error logs)
      keys.forEach((key, index) => {
-        if (index > 0) doc.addPage();
+        if (index > 0) {
+          // Restore before adding page
+          doc.addPage = trueOriginalAddPage;
+          doc.addPage();
+        }
         renderReportPage(doc, data[key], key);
+        // Restore the original addPage function after each render
+        doc.addPage = trueOriginalAddPage;
      });
   } else {
      const title = filename !== 'Combined_Report' && filename !== 'Charger_Health_Report' ? filename : 'Charger Health Report';
      // Single file mode: Just render the full report page
      renderReportPage(doc, data, title);
+     // Restore the original addPage function
+     doc.addPage = trueOriginalAddPage;
   }
 
   doc.save(`${filename}.pdf`);

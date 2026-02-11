@@ -1,6 +1,206 @@
 import * as XLSX from 'xlsx';
 
 /**
+ * Export connector data to CSV file (no character limit)
+ * @param {Object} data - The result object containing connector arrays
+ * @param {String} filename - The filename for the exported CSV file
+ */
+export const exportConnectorsToCSV = (data, filename = 'Connectors_Data') => {
+  if (!data) {
+    console.error('No data provided for CSV export');
+    alert('No data available to export');
+    return;
+  }
+
+  try {
+    console.log('=== CSV EXPORT DEBUG ===');
+    console.log('Full data structure:', data);
+    console.log('Data keys:', Object.keys(data));
+    
+    // Extract CPID from parent data.info
+    const getCPIDFromData = (dataObj) => {
+      try {
+        if (!dataObj || !dataObj.info) return null;
+        let info = dataObj.info;
+        if (typeof info === 'string') info = JSON.parse(info);
+        if (Array.isArray(info) && info.length > 0) {
+          return info[0]['Charge Point id'] || info[0]['Charge Point Id'] || info[0]['chargePointId'] || null;
+        }
+      } catch (e) {
+        console.error('Error extracting CPID from data.info:', e);
+        return null;
+      }
+      return null;
+    };
+    
+    const parentCPID = getCPIDFromData(data);
+    console.log('Extracted parent CPID:', parentCPID);
+    
+    // Get connector data - handle any connector keys dynamically
+    const connectorKeys = Object.keys(data).filter(key => {
+      const isArray = Array.isArray(data[key]);
+      const isNotExcluded = !key.startsWith('report_') && key !== 'date' && key !== 'info' && key !== 'All Files';
+      const hasData = data[key]?.length > 0;
+      return isArray && isNotExcluded && hasData;
+    });
+
+    console.log('Connector keys that will be exported:', connectorKeys);
+
+    if (connectorKeys.length === 0) {
+      console.error('No connector data found in the provided data');
+      alert('No connector data found to export. Please ensure you have processed the file and data is loaded.');
+      return;
+    }
+
+    // Helper function to escape CSV values
+    const escapeCSVValue = (value) => {
+      if (value === null || value === undefined) return '';
+      const stringValue = String(value);
+      // If value contains comma, newline, or quotes, wrap in quotes and escape internal quotes
+      if (stringValue.includes(',') || stringValue.includes('\n') || stringValue.includes('"')) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+      }
+      return stringValue;
+    };
+
+    // Helper function to get all unique column names from array of objects
+    const getAllColumns = (dataArray) => {
+      const allKeys = new Set();
+      dataArray.forEach(item => {
+        if (typeof item === 'object') {
+          Object.keys(item).forEach(key => {
+            if (key.toUpperCase() !== 'IS_PREPARING') {
+              allKeys.add(key);
+            }
+          });
+        }
+      });
+      return Array.from(allKeys);
+    };
+
+    // Helper function to order columns
+    const orderColumns = (columns) => {
+      const startKey = columns.find(h => h.toUpperCase() === 'SESSION_START_TIME');
+      const endKey = columns.find(h => h.toUpperCase() === 'SESSION_END_TIME');
+      
+      const orderedColumns = [];
+      if (startKey) orderedColumns.push(startKey);
+      if (endKey) orderedColumns.push(endKey);
+      
+      const remainingColumns = columns.filter(h => h !== startKey && h !== endKey);
+      return [...orderedColumns, ...remainingColumns];
+    };
+
+    // Combine all connector data
+    const allCombinedData = [];
+    
+    connectorKeys.forEach((connectorKey) => {
+      const connectorData = data[connectorKey];
+      if (connectorData && connectorData.length > 0) {
+        console.log(`Adding ${connectorKey} data: ${connectorData.length} rows`);
+        
+        connectorData.forEach((row) => {
+          const cpidFromRow = row.cp_id;
+          const connectorIdFromRow = row.connector_id;
+          const finalCpid = cpidFromRow || parentCPID || '';
+          
+          const formattedRow = {
+            '#': allCombinedData.length + 1,
+            'CPID': finalCpid,
+            'Connector': connectorKey,
+            'Connector ID': connectorIdFromRow || '',
+            ...row
+          };
+          
+          // Remove duplicate cp_id and connector_id fields
+          delete formattedRow.cp_id;
+          delete formattedRow.connector_id;
+          delete formattedRow.IS_PREPARING;
+          
+          allCombinedData.push(formattedRow);
+        });
+      }
+    });
+
+    if (allCombinedData.length === 0) {
+      alert('No data to export');
+      return;
+    }
+
+    // Get all unique headers
+    const allHeaders = [];
+    const headerSet = new Set();
+    allCombinedData.forEach(row => {
+      Object.keys(row).forEach(key => {
+        if (!headerSet.has(key)) {
+          headerSet.add(key);
+          allHeaders.push(key);
+        }
+      });
+    });
+
+    // Define column order
+    const priorityHeaders = ['#', 'CPID', 'Connector', 'Connector ID', 'session_start_time', 'session_end_time'];
+    const remainingHeaders = allHeaders.filter(h => !priorityHeaders.includes(h));
+    const finalHeaders = [
+      ...priorityHeaders.filter(h => allHeaders.includes(h)),
+      ...remainingHeaders
+    ];
+
+    console.log('Final column order:', finalHeaders);
+
+    // Build CSV content
+    let csvContent = '';
+    
+    // Add header row
+    csvContent += finalHeaders.map(header => escapeCSVValue(header.replace(/_/g, ' '))).join(',') + '\n';
+    
+    // Add data rows
+    allCombinedData.forEach(row => {
+      const rowValues = finalHeaders.map(header => {
+        let value = row[header];
+        
+        // Special handling for all_errors - format as readable string
+        if (header === 'all_errors' && Array.isArray(value) && value.length > 0) {
+          value = value.map((err, idx) => {
+            const parts = [];
+            if (err.timestamp) parts.push(`Time: ${err.timestamp}`);
+            if (err.errorCode) parts.push(`Error: ${err.errorCode}`);
+            if (err.reason) parts.push(`Reason: ${err.reason}`);
+            if (err.info) parts.push(`Info: ${err.info}`);
+            if (err.vendorErrorCode) parts.push(`Vendor: ${err.vendorErrorCode}`);
+            return `[${idx + 1}] ${parts.join(', ')}`;
+          }).join(' | ');
+        }
+        
+        return escapeCSVValue(value);
+      });
+      csvContent += rowValues.join(',') + '\n';
+    });
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    const timestamp = new Date().toISOString().split('T')[0];
+    const finalFilename = `${filename}_${timestamp}.csv`;
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', finalFilename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    console.log(`CSV file exported successfully: ${finalFilename}`);
+  } catch (error) {
+    console.error('Error exporting to CSV:', error);
+    alert(`Failed to export CSV file: ${error.message}`);
+  }
+};
+
+/**
  * Export both Connector1 and Connector2 data to Excel file
  * @param {Object} data - The result object containing Connector1 and Connector2 arrays
  * @param {String} filename - The filename for the exported Excel file
