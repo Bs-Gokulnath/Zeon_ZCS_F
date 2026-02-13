@@ -518,13 +518,14 @@ export const exportDashboardAnalytics = (dashboardData, filename = 'Dashboard_An
       networkByStation = [],
       networkByCPID = [],
       prechargingByOEM = [],
-      prechargingByStation = []
+      prechargingByStation = [],
+      prechargingByCPID = []
     } = dashboardData;
 
     // Create a new workbook
     const workbook = XLSX.utils.book_new();
 
-    // Sheet 1: Network Performance by OEM
+    // Sheet 1: Negative Stops by OEM
     if (networkByOEM.length > 0) {
       const oemData = networkByOEM.map(item => ({
         'OEM Name': item.name,
@@ -532,10 +533,10 @@ export const exportDashboardAnalytics = (dashboardData, filename = 'Dashboard_An
       }));
       const oemSheet = XLSX.utils.json_to_sheet(oemData);
       XLSX.utils.book_append_sheet(workbook, oemSheet, 'Network Perf by OEM');
-      console.log('Added Network Performance by OEM sheet');
+      console.log('Added Negative Stops by OEM sheet');
     }
 
-    // Sheet 2: Network Performance by Station
+    // Sheet 2: Negative Stops by Station
     if (networkByStation.length > 0) {
       const stationData = networkByStation.map(item => ({
         'Station Name': item.name,
@@ -543,10 +544,10 @@ export const exportDashboardAnalytics = (dashboardData, filename = 'Dashboard_An
       }));
       const stationSheet = XLSX.utils.json_to_sheet(stationData);
       XLSX.utils.book_append_sheet(workbook, stationSheet, 'Network Perf by Station');
-      console.log('Added Network Performance by Station sheet');
+      console.log('Added Negative Stops by Station sheet');
     }
 
-    // Sheet 3: Network Performance by CPID
+    // Sheet 3: Negative Stops by CPID
     if (networkByCPID.length > 0) {
       const cpidData = networkByCPID.map(item => ({
         'CPID': item.name,
@@ -554,7 +555,7 @@ export const exportDashboardAnalytics = (dashboardData, filename = 'Dashboard_An
       }));
       const cpidSheet = XLSX.utils.json_to_sheet(cpidData);
       XLSX.utils.book_append_sheet(workbook, cpidSheet, 'Network Perf by CPID');
-      console.log('Added Network Performance by CPID sheet');
+      console.log('Added Negative Stops by CPID sheet');
     }
 
     // Sheet 4: Precharging Failure by OEM
@@ -577,6 +578,17 @@ export const exportDashboardAnalytics = (dashboardData, filename = 'Dashboard_An
       const prechargingStationSheet = XLSX.utils.json_to_sheet(prechargingStationData);
       XLSX.utils.book_append_sheet(workbook, prechargingStationSheet, 'Precharging by Station');
       console.log('Added Precharging Failure by Station sheet');
+    }
+
+    // Sheet 6: Precharging Failure by CPID
+    if (prechargingByCPID.length > 0) {
+      const prechargingCPIDData = prechargingByCPID.map(item => ({
+        'CPID': item.name,
+        'Precharging Failures': item.value
+      }));
+      const prechargingCPIDSheet = XLSX.utils.json_to_sheet(prechargingCPIDData);
+      XLSX.utils.book_append_sheet(workbook, prechargingCPIDSheet, 'Precharging by CPID');
+      console.log('Added Precharging Failure by CPID sheet');
     }
 
     // Check if any sheets were created

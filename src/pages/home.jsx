@@ -7,6 +7,54 @@ import DashboardView from './DashboardView';
 import { AuthenticationPieChart, UsageReadinessFunnelChart, PowerQualityLineChart } from './report_graphs';
 import MultiSelectDropdown from '../components/MultiSelectDropdown';
 
+// Helper: Get Connector Type (AC/DC)
+const getConnectorType = (data) => {
+  try {
+    if (data && data.info) {
+      let info = data.info;
+      if (typeof info === 'string') info = JSON.parse(info);
+      if (Array.isArray(info) && info.length > 0) {
+        const connectorStandard = info[0]['Connector Standard(AC/DC)'] || 
+                                 info[0]['Connector Standard'] || 
+                                 info[0]['ConnectorStandard'] ||
+                                 info[0]['Type'] ||
+                                 null;
+        if (connectorStandard) {
+          return String(connectorStandard).toUpperCase().trim();
+        }
+      }
+    }
+  } catch (e) { 
+    console.error('Error getting connector type:', e);
+  }
+  return null;
+};
+
+// Helper: Filter Results by Connector Type
+const filterResultsByConnectorType = (results, connectorType) => {
+  if (!results || connectorType === 'Combined') return results;
+  
+  const filtered = {};
+  Object.entries(results).forEach(([key, data]) => {
+    if (key === 'All Files') {
+      // We'll regenerate 'All Files' after filtering
+      return;
+    }
+    const dataConnectorType = getConnectorType(data);
+    if (connectorType === 'Combined' || dataConnectorType === connectorType) {
+      filtered[key] = data;
+    }
+  });
+  
+  // Regenerate 'All Files' aggregate from filtered data
+  if (Object.keys(filtered).length > 0) {
+    const allFilesData = aggregateResults(Object.values(filtered));
+    filtered['All Files'] = allFilesData;
+  }
+  
+  return filtered;
+};
+
 // Helper: Aggregate Results (Defined before usage in useMemo)
 const aggregateResults = (resultsList) => {
   if (!resultsList || !Array.isArray(resultsList) || resultsList.length === 0) return {};
@@ -103,6 +151,8 @@ export default function Home() {
     }
   });
 
+  const [connectorType, setConnectorType] = useState('DC'); // AC, Combined, DC - default to DC
+
   // Persistence Effects
   useEffect(() => {
     if (allResults) {
@@ -164,23 +214,33 @@ export default function Home() {
     };
   }, []);
 
-  // Derived result based on selected files
+  // Reset file selection when connector type changes
+  useEffect(() => {
+    if (allResults) {
+      setSelectedFiles(['All Files']);
+    }
+  }, [connectorType]);
+
+  // Derived result based on selected files and connector type
   const result = useMemo(() => {
     if (!allResults) return null;
 
+    // First filter by connector type
+    const filteredResults = filterResultsByConnectorType(allResults, connectorType);
+
     // If "All Files" is selected or nothing is selected
     if (selectedFiles.includes('All Files') || selectedFiles.length === 0) {
-      return allResults['All Files'] || allResults;
+      return filteredResults['All Files'] || filteredResults;
     }
 
     // If single file selected
     if (selectedFiles.length === 1) {
-      return allResults[selectedFiles[0]];
+      return filteredResults[selectedFiles[0]];
     }
 
     // If multiple files selected, aggregate them
-    return aggregateResults(selectedFiles.map(fileName => allResults[fileName]).filter(Boolean));
-  }, [allResults, selectedFiles]);
+    return aggregateResults(selectedFiles.map(fileName => filteredResults[fileName]).filter(Boolean));
+  }, [allResults, selectedFiles, connectorType]);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -634,7 +694,41 @@ export default function Home() {
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </div>
-                <h3 className="text-base font-bold text-black">Processing Complete!</h3>
+                <h3 className="text-base font-bold text-black">Processing Completed!</h3>
+              </div>
+
+              {/* Connector Type Filter */}
+              <div className="flex items-center bg-gray-100 rounded-lg p-0.5 border border-gray-200 ml-6">
+                <button
+                  onClick={() => setConnectorType('AC')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                    connectorType === 'AC'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-transparent text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  AC
+                </button>
+                <button
+                  onClick={() => setConnectorType('Combined')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                    connectorType === 'Combined'
+                      ? 'bg-gray-700 text-white shadow-sm'
+                      : 'bg-transparent text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  Combined
+                </button>
+                <button
+                  onClick={() => setConnectorType('DC')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all duration-200 ${
+                    connectorType === 'DC'
+                      ? 'bg-green-600 text-white shadow-sm'
+                      : 'bg-transparent text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  DC
+                </button>
               </div>
 
               {/* File Filter Dropdown */}
@@ -645,7 +739,13 @@ export default function Home() {
                     options={[
                       { value: 'All Files', label: 'All Files (Aggregated)' },
                       ...Object.keys(allResults)
-                        .filter(k => k !== 'All Files')
+                        .filter(k => {
+                          if (k === 'All Files') return false;
+                          // Filter by connector type
+                          const data = allResults[k];
+                          const dataConnectorType = getConnectorType(data);
+                          return connectorType === 'Combined' || dataConnectorType === connectorType;
+                        })
                         .sort()
                         .map(fileName => {
                           const data = allResults[fileName];
@@ -671,7 +771,12 @@ export default function Home() {
                   {/* File Count Badges */}
                   <div className="flex items-center gap-2">
                     <div className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap">
-                      {Object.keys(allResults).filter(k => k !== 'All Files').length} Success
+                      {Object.keys(allResults).filter(k => {
+                        if (k === 'All Files') return false;
+                        const data = allResults[k];
+                        const dataConnectorType = getConnectorType(data);
+                        return connectorType === 'Combined' || dataConnectorType === connectorType;
+                      }).length} Success {connectorType !== 'Combined' ? `(${connectorType})` : ''}
                     </div>
                     {failedFiles.length > 0 && (
                       <div className="group relative">
@@ -740,12 +845,15 @@ export default function Home() {
                       orderedHeaders.push(connectorIdKey);
                     }
 
-                    // Add Start Time third
+                    // Add Charger Type third (we'll add this manually)
+                    orderedHeaders.push('__CHARGER_TYPE__');
+
+                    // Add Start Time fourth
                     if (startKey && headers.includes(startKey)) {
                       orderedHeaders.push(startKey);
                     }
 
-                    // Add End Time fourth
+                    // Add End Time fifth
                     if (endKey && headers.includes(endKey)) {
                       orderedHeaders.push(endKey);
                     }
@@ -753,6 +861,9 @@ export default function Home() {
                     // Add remaining columns
                     const remainingHeaders = headers.filter(h => h !== startKey && h !== endKey && h !== cpidKey && h !== connectorIdKey);
                     headers = [...orderedHeaders, ...remainingHeaders];
+
+                    // Get charger type for this connector data
+                    const chargerType = getConnectorType(result) || 'Unknown';
 
                     return (
                       <div key={connectorKey} className="bg-white border border-gray-300 overflow-hidden flex flex-col">
@@ -769,6 +880,7 @@ export default function Home() {
                                   // Special formatting for specific columns
                                   if (header.toUpperCase() === 'CP_ID') displayName = 'CPID';
                                   if (header.toUpperCase() === 'CONNECTOR_ID') displayName = 'Connector ID';
+                                  if (header === '__CHARGER_TYPE__') displayName = 'CHARGER TYPE';
 
                                   return (
                                     <th key={header} className="px-2 py-1 text-left text-[10px] font-bold text-white uppercase border-r border-gray-700 last:border-r-0">
@@ -785,6 +897,21 @@ export default function Home() {
                                     {idx + 1}
                                   </td>
                                   {headers.map((header) => {
+                                    // Handle special Charger Type column
+                                    if (header === '__CHARGER_TYPE__') {
+                                      return (
+                                        <td key={header} className="px-2 py-1 text-[10px] border-r border-gray-200 last:border-r-0">
+                                          <span className={`font-bold px-2 py-0.5 rounded text-white ${
+                                            chargerType === 'AC' ? 'bg-blue-600' : 
+                                            chargerType === 'DC' ? 'bg-green-600' : 
+                                            'bg-gray-600'
+                                          }`}>
+                                            {chargerType}
+                                          </span>
+                                        </td>
+                                      );
+                                    }
+                                    
                                     const value = record[header];
                                     return (
                                       <td key={header} className="px-2 py-1 text-[10px] text-gray-700 border-r border-gray-200 last:border-r-0">
@@ -822,7 +949,19 @@ export default function Home() {
               <button
                 onClick={() => {
                   const isAll = selectedFiles.includes('All Files') || selectedFiles.length === 0;
-                  const dataToPrint = isAll ? allResults : result;
+                  
+                  // Filter by connector type first
+                  const filteredResults = filterResultsByConnectorType(allResults, connectorType);
+                  
+                  // Get the correct data for PDF generation
+                  let dataToPrint;
+                  if (isAll) {
+                    // Use the aggregated 'All Files' from filtered results
+                    dataToPrint = filteredResults['All Files'] || filteredResults;
+                  } else {
+                    // Use the already filtered result from useMemo
+                    dataToPrint = result;
+                  }
 
                   let filename = 'Combined_Report';
                   if (!isAll && selectedFiles.length === 1) {
@@ -830,6 +969,11 @@ export default function Home() {
                     filename = cpId || selectedFiles[0];
                   } else if (!isAll && selectedFiles.length > 1) {
                     filename = `Multi_Filter_${selectedFiles.length}_Files`;
+                  }
+                  
+                  // Add connector type to filename
+                  if (connectorType !== 'Combined') {
+                    filename = `${filename}_${connectorType}`;
                   }
 
                   generateChargerHealthPDF(dataToPrint, filename);
@@ -849,11 +993,14 @@ export default function Home() {
                 onClick={() => {
                   const isAll = selectedFiles.includes('All Files') || selectedFiles.length === 0;
 
+                  // Filter by connector type first
+                  const filteredResults = filterResultsByConnectorType(allResults, connectorType);
+                  
                   // Get the correct data structure for export
                   let dataToPrint;
                   if (isAll) {
                     // When "All Files" is selected, use the aggregated result
-                    dataToPrint = allResults['All Files'] || result;
+                    dataToPrint = filteredResults['All Files'] || result;
                   } else {
                     // When specific file(s) selected, use the result (already aggregated if multiple)
                     dataToPrint = result;
@@ -867,6 +1014,11 @@ export default function Home() {
                     filename = `Multi_Filter_${selectedFiles.length}_Files_Connectors`;
                   } else {
                     filename = 'All_Files_Connectors';
+                  }
+                  
+                  // Add connector type to filename
+                  if (connectorType !== 'Combined') {
+                    filename = `${filename}_${connectorType}`;
                   }
 
                   console.log('Exporting data:', dataToPrint);

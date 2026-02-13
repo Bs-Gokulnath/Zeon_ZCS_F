@@ -46,7 +46,7 @@ ORDER BY date ASC
 
 ---
 
-### 2. **Network Performance by OEM** (`processNetworkPerformance`)
+### 2. **Negative Stops by OEM** (`processNetworkPerformance`)
 **Current Location:** DashboardView.jsx, lines ~450-520
 **What it does:**
 - Groups sessions by OEM name
@@ -73,7 +73,7 @@ ORDER BY negative_stop_percentage DESC
 
 ---
 
-### 3. **Network Performance by Station** (`processNetworkPerformanceByStation`)
+### 3. **Negative Stops by Station** (`processNetworkPerformanceByStation`)
 **Current Location:** DashboardView.jsx, lines ~520-590
 **What it does:**
 - Same as above but grouped by station name
@@ -421,15 +421,15 @@ Response:
    - `files` table for report metadata
 3. Implement core aggregation queries:
    - Session trend (daily power aggregation)
-   - Network performance by OEM (with P/C/N breakdown)
-   - Network performance by station
+   - Negative Stops by OEM (with P/C/N breakdown)
+   - Negative Stops by station
 4. Implement connector type filtering (`WHERE connector_type = ?`)
 5. Setup Redis caching (15-30 min TTL)
 
 **Success Criteria:**
 - `/api/dashboard?connectorType=DC` returns complete response in <500ms
 - Changing connectorType filter returns cached result in <100ms
-- Session trend and network performance charts render correctly
+- Session trend and Negative Stops charts render correctly
 
 ---
 
@@ -734,7 +734,7 @@ CREATE TABLE files (
 
 2. **Week 1-2: Backend Foundation**
    - Implement `/api/dashboard` endpoint
-   - Move core computations (session trend, network performance)
+   - Move core computations (session trend, Negative Stops)
    - Setup Redis caching
 
 3. **Week 3: Advanced Features**

@@ -385,7 +385,7 @@ const getTopCPIDsByNegativeStops = (allResults, oemName) => {
     return filteredStats.sort((a, b) => b.negativeStops - a.negativeStops);
 };
 
-// Process Network Performance (Negative Stop %)
+// Process Negative Stops (Negative Stop %)
 const processNetworkPerformance = (allResults) => {
     if (!allResults || Object.keys(allResults).length === 0) return { chartData: [], oemMapping: {} };
 
@@ -467,14 +467,36 @@ const processNetworkPerformance = (allResults) => {
     return { chartData, oemMapping };
 };
 
-// Process Network Performance by Station (Negative Stop %)
-const processNetworkPerformanceByStation = (allResults) => {
+// Process Negative Stops by Station (Negative Stop %)
+const processNetworkPerformanceByStation = (allResults, selectedOEM = null) => {
     if (!allResults || Object.keys(allResults).length === 0) return [];
 
     const stationStats = {};
 
     Object.entries(allResults).forEach(([key, data]) => {
         if (key === 'All Files') return;
+
+        // Filter by OEM if selected
+        if (selectedOEM && selectedOEM !== 'OVERALL') {
+            let oem = 'Unknown';
+            try {
+                if (data.info) {
+                    let info = data.info;
+                    if (typeof info === 'string') info = JSON.parse(info);
+                    if (Array.isArray(info) && info.length > 0) {
+                        oem = info[0]['OEM Name'] || 
+                              info[0]['OEM'] || 
+                              info[0]['Make'] || 
+                              info[0]['Manufacturer'] ||
+                              info[0]['oem_name'] ||
+                              'Unknown';
+                    }
+                }
+            } catch (e) { }
+            oem = String(oem).trim();
+            if (!oem || oem === 'Unknown' || oem === '') oem = 'UNKNOWN';
+            if (oem !== selectedOEM) return;
+        }
 
         // Get Station Name
         const stationName = getStationName(data) || 'Unknown Station';
@@ -510,8 +532,8 @@ const processNetworkPerformanceByStation = (allResults) => {
     return chartData.sort((a, b) => b.value - a.value);
 };
 
-// Process Network Performance by CPID (Negative Stop %)
-const processNetworkPerformanceByCPID = (allResults) => {
+// Process Negative Stops by CPID (Negative Stop %)
+const processNetworkPerformanceByCPID = (allResults, selectedOEM = null) => {
     if (!allResults || Object.keys(allResults).length === 0) return [];
 
     const stats = {};
@@ -521,8 +543,31 @@ const processNetworkPerformanceByCPID = (allResults) => {
         // Skip if key is 'All Files'
         if (key === 'All Files') return;
 
+        // Filter by OEM if selected
+        if (selectedOEM && selectedOEM !== 'OVERALL') {
+            let oem = 'Unknown';
+            try {
+                if (data.info) {
+                    let info = data.info;
+                    if (typeof info === 'string') info = JSON.parse(info);
+                    if (Array.isArray(info) && info.length > 0) {
+                        oem = info[0]['OEM Name'] || 
+                              info[0]['OEM'] || 
+                              info[0]['Make'] || 
+                              info[0]['Manufacturer'] ||
+                              info[0]['oem_name'] ||
+                              'Unknown';
+                    }
+                }
+            } catch (e) { }
+            oem = String(oem).trim();
+            if (!oem || oem === 'Unknown' || oem === '') oem = 'UNKNOWN';
+            if (oem !== selectedOEM) return;
+        }
+
         // Extract CPID with better field checking
         let cpid = 'Unknown';
+        let stationName = 'Unknown Station';
         try {
             if (data.info) {
                 let info = data.info;
@@ -535,6 +580,15 @@ const processNetworkPerformanceByCPID = (allResults) => {
                            info[0]['CPID'] || 
                            info[0]['CP ID'] ||
                            'Unknown';
+                    
+                    // Extract Station Name
+                    stationName = info[0]['Station Name'] || 
+                                 info[0]['Station Alias Name'] || 
+                                 info[0]['Station Identity'] || 
+                                 info[0]['station_name'] ||
+                                 info[0]['StationName'] ||
+                                 info[0]['Station'] ||
+                                 'Unknown Station';
                 }
             }
         } catch (e) { 
@@ -546,6 +600,11 @@ const processNetworkPerformanceByCPID = (allResults) => {
         if (!cpid || cpid === 'Unknown' || cpid === '') {
             cpid = 'UNKNOWN';
         }
+        
+        // Create display name with Station - CPID
+        const displayName = stationName !== 'Unknown Station' 
+            ? `${stationName} - ${cpid}` 
+            : cpid;
 
         // Extract Counts
         const t1 = (data.report_1?.['Charging Sessions'] || 0);
@@ -553,11 +612,11 @@ const processNetworkPerformanceByCPID = (allResults) => {
         const t2 = (data.report_2?.['Charging Sessions'] || 0);
         const n2 = (data.report_2?.['Failed / Error Stops'] || 0);
 
-        if (!stats[cpid]) {
-            stats[cpid] = { total: 0, negative: 0 };
+        if (!stats[displayName]) {
+            stats[displayName] = { total: 0, negative: 0 };
         }
-        stats[cpid].total += t1 + t2;
-        stats[cpid].negative += n1 + n2;
+        stats[displayName].total += t1 + t2;
+        stats[displayName].negative += n1 + n2;
     });
 
     // Create chart data from CPID stats
@@ -572,13 +631,35 @@ const processNetworkPerformanceByCPID = (allResults) => {
 };
 
 // Process Precharging Failure by OEM
-const processPrechargingFailureByOEM = (allResults) => {
+const processPrechargingFailureByOEM = (allResults, selectedOEM = null) => {
     if (!allResults || Object.keys(allResults).length === 0) return [];
 
     const oemStats = {};
 
     Object.entries(allResults).forEach(([key, data]) => {
         if (key === 'All Files') return;
+
+        // Filter by OEM if selected
+        if (selectedOEM && selectedOEM !== 'OVERALL') {
+            let oem = 'Unknown';
+            try {
+                if (data.info) {
+                    let info = data.info;
+                    if (typeof info === 'string') info = JSON.parse(info);
+                    if (Array.isArray(info) && info.length > 0) {
+                        oem = info[0]['OEM Name'] || 
+                              info[0]['OEM'] || 
+                              info[0]['Make'] || 
+                              info[0]['Manufacturer'] ||
+                              info[0]['oem_name'] ||
+                              'Unknown';
+                    }
+                }
+            } catch (e) { }
+            oem = String(oem).trim();
+            if (!oem || oem === 'Unknown' || oem === '') oem = 'UNKNOWN';
+            if (oem !== selectedOEM) return;
+        }
 
         // Extract OEM
         let oem = 'Unknown';
@@ -643,13 +724,35 @@ const processPrechargingFailureByOEM = (allResults) => {
 };
 
 // Process Precharging Failure by Station
-const processPrechargingFailureByStation = (allResults) => {
+const processPrechargingFailureByStation = (allResults, selectedOEM = null) => {
     if (!allResults || Object.keys(allResults).length === 0) return [];
 
     const stationStats = {};
 
     Object.entries(allResults).forEach(([key, data]) => {
         if (key === 'All Files') return;
+
+        // Filter by OEM if selected
+        if (selectedOEM && selectedOEM !== 'OVERALL') {
+            let oem = 'Unknown';
+            try {
+                if (data.info) {
+                    let info = data.info;
+                    if (typeof info === 'string') info = JSON.parse(info);
+                    if (Array.isArray(info) && info.length > 0) {
+                        oem = info[0]['OEM Name'] || 
+                              info[0]['OEM'] || 
+                              info[0]['Make'] || 
+                              info[0]['Manufacturer'] ||
+                              info[0]['oem_name'] ||
+                              'Unknown';
+                    }
+                }
+            } catch (e) { }
+            oem = String(oem).trim();
+            if (!oem || oem === 'Unknown' || oem === '') oem = 'UNKNOWN';
+            if (oem !== selectedOEM) return;
+        }
 
         // Get Station Name
         const stationName = getStationName(data) || 'Unknown Station';
@@ -689,6 +792,86 @@ const processPrechargingFailureByStation = (allResults) => {
             fill: '#8B5CF6' // Purple-500
         }))
         .filter(item => item.value > 0); // Only show Stations with failures
+
+    // Sort by value (highest first)
+    return chartData.sort((a, b) => b.value - a.value);
+};
+
+// Process Precharging Failure by CPID
+const processPrechargingFailureByCPID = (allResults, selectedOEM = null) => {
+    if (!allResults || Object.keys(allResults).length === 0) return [];
+
+    const cpidStats = {};
+
+    Object.entries(allResults).forEach(([key, data]) => {
+        if (key === 'All Files') return;
+
+        // Filter by OEM if selected
+        if (selectedOEM && selectedOEM !== 'OVERALL') {
+            let oem = 'Unknown';
+            try {
+                if (data.info) {
+                    let info = data.info;
+                    if (typeof info === 'string') info = JSON.parse(info);
+                    if (Array.isArray(info) && info.length > 0) {
+                        oem = info[0]['OEM Name'] || 
+                              info[0]['OEM'] || 
+                              info[0]['Make'] || 
+                              info[0]['Manufacturer'] ||
+                              info[0]['oem_name'] ||
+                              'Unknown';
+                    }
+                }
+            } catch (e) { }
+            oem = String(oem).trim();
+            if (!oem || oem === 'Unknown' || oem === '') oem = 'UNKNOWN';
+            if (oem !== selectedOEM) return;
+        }
+
+        // Get CPID and Station Name
+        const cpid = getChargePointID(data) || 'Unknown CPID';
+        const stationName = getStationName(data) || 'Unknown Station';
+        
+        // Create display name with Station - CPID
+        const displayName = stationName !== 'Unknown Station' && stationName
+            ? `${stationName} - ${cpid}` 
+            : cpid;
+
+        // Count precharging failures from raw data
+        let prechargingFailures = 0;
+        
+        // Check Connector1
+        if (Array.isArray(data.Connector1)) {
+            prechargingFailures += data.Connector1.filter(row => {
+                const errorCode = getVal(row, 'vendorErrorCode', 'VendorErrorCode', 'VENDORERRORCODE', 'ErrorCode');
+                const isCharging = getVal(row, 'is_Charging', 'isCharging', 'IS_CHARGING');
+                return String(errorCode).toLowerCase().includes('precharging') && isCharging === 0;
+            }).length;
+        }
+        
+        // Check Connector2
+        if (Array.isArray(data.Connector2)) {
+            prechargingFailures += data.Connector2.filter(row => {
+                const errorCode = getVal(row, 'vendorErrorCode', 'VendorErrorCode', 'VENDORERRORCODE', 'ErrorCode');
+                const isCharging = getVal(row, 'is_Charging', 'isCharging', 'IS_CHARGING');
+                return String(errorCode).toLowerCase().includes('precharging') && isCharging === 0;
+            }).length;
+        }
+
+        if (!cpidStats[displayName]) {
+            cpidStats[displayName] = 0;
+        }
+        cpidStats[displayName] += prechargingFailures;
+    });
+
+    // Create chart data
+    const chartData = Object.entries(cpidStats)
+        .map(([name, value]) => ({
+            name,
+            value,
+            fill: '#F59E0B' // Amber-500
+        }))
+        .filter(item => item.value > 0); // Only show CPIDs with failures
 
     // Sort by value (highest first)
     return chartData.sort((a, b) => b.value - a.value);
@@ -918,16 +1101,17 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
     // State
     const [selectedCpId, setSelectedCpId] = useState('All');
     const [selectedStation, setSelectedStation] = useState('All');
-    const [selectedOEM, setSelectedOEM] = useState(null); // For OEM filtering from Network Performance chart
+    const [selectedOEM, setSelectedOEM] = useState(null); // For OEM filtering from Negative Stops chart
     const [showCPIDModal, setShowCPIDModal] = useState(false);
     const [cpidModalData, setCpidModalData] = useState({ oemName: '', topCPIDs: [] });
     const [connectorType, setConnectorType] = useState('DC'); // AC, Combined, DC - default to DC
 
     // Grouping Logic
     const groupedResults = useMemo(() => {
-        if (!allResults) return { byId: {}, byStation: {} };
+        if (!allResults) return { byId: {}, byStation: {}, stationToCpids: {} };
         const byId = {};
         const byStation = {};
+        const stationToCpids = {}; // Maps station name to array of CPIDs
 
         Object.entries(allResults).forEach(([filename, data]) => {
             if (filename === 'All Files') return;
@@ -950,12 +1134,32 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
             const station = getStationName(data);
             if (!byStation[station]) byStation[station] = [];
             byStation[station].push(data);
+
+            // Map Station to CPIDs
+            if (!stationToCpids[station]) stationToCpids[station] = new Set();
+            stationToCpids[station].add(cpid);
         });
-        return { byId, byStation };
+
+        // Convert Sets to sorted Arrays
+        Object.keys(stationToCpids).forEach(station => {
+            stationToCpids[station] = Array.from(stationToCpids[station]).sort();
+        });
+
+        return { byId, byStation, stationToCpids };
     }, [allResults, connectorType]);
 
     const cpIds = Object.keys(groupedResults.byId).sort();
     const stations = Object.keys(groupedResults.byStation).sort();
+
+    // Auto-reset CPID if it's not valid for the selected station
+    useEffect(() => {
+        if (selectedStation !== 'All' && selectedCpId !== 'All') {
+            const stationCpids = groupedResults.stationToCpids[selectedStation] || [];
+            if (!stationCpids.includes(selectedCpId)) {
+                setSelectedCpId('All');
+            }
+        }
+    }, [selectedStation, groupedResults.stationToCpids, selectedCpId]);
 
     // Determine Active Result
     const activeResult = useMemo(() => {
@@ -974,7 +1178,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
             });
         }
 
-        // 0. OEM Filter (Highest priority - from Network Performance chart)
+        // 0. OEM Filter (Highest priority - from Negative Stops chart)
         if (selectedOEM && selectedOEM !== 'OVERALL') {
             const networkPerf = processNetworkPerformance(filteredAllResults);
             const filesForOEM = networkPerf.oemMapping[selectedOEM] || [];
@@ -1064,9 +1268,19 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
         { value: 'All', label: 'All Stations' },
         ...stations.map(s => ({ value: s, label: s }))
     ];
+    
+    // Filter CPIDs based on selected station
+    const availableCpIds = useMemo(() => {
+        if (selectedStation === 'All') {
+            return cpIds;
+        }
+        // Return only CPIDs that belong to the selected station
+        return groupedResults.stationToCpids[selectedStation] || [];
+    }, [selectedStation, cpIds, groupedResults.stationToCpids]);
+    
     const cpidOptions = [
-        { value: 'All', label: 'All CPIDs' },
-        ...cpIds.map(c => ({ value: c, label: c }))
+        { value: 'All', label: selectedStation === 'All' ? 'All CPIDs' : `All CPIDs in ${selectedStation}` },
+        ...availableCpIds.map(c => ({ value: c, label: c }))
     ];
     const fileOptions = [
         { value: 'All Files', label: 'All Files' },
@@ -1156,7 +1370,7 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
         return filtered;
     }, [allResults, connectorType]);
 
-    // Network Performance Data (Global) - using filtered data
+    // Negative Stops Data (Global) - using filtered data
     const networkPerformance = processNetworkPerformance(filteredAllResultsForCharts);
     const networkData = networkPerformance.chartData.map(item => ({
         ...item,
@@ -1164,17 +1378,20 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
         opacity: selectedOEM === item.name ? 1 : (selectedOEM ? 0.4 : 1)
     }));
 
-    // Network Performance by Station Data - using filtered data
-    const stationPerformanceData = processNetworkPerformanceByStation(filteredAllResultsForCharts);
+    // Negative Stops by Station Data - filtered by OEM if selected
+    const stationPerformanceData = processNetworkPerformanceByStation(filteredAllResultsForCharts, selectedOEM);
     
-    // Network Performance by CPID Data - using filtered data
-    const cpidPerformanceData = processNetworkPerformanceByCPID(filteredAllResultsForCharts);
+    // Negative Stops by CPID Data - filtered by OEM if selected
+    const cpidPerformanceData = processNetworkPerformanceByCPID(filteredAllResultsForCharts, selectedOEM);
     
-    // Precharging Failure by OEM Data - using filtered data
-    const prechargingFailureData = processPrechargingFailureByOEM(filteredAllResultsForCharts);
+    // Precharging Failure by OEM Data - filtered by OEM if selected
+    const prechargingFailureData = processPrechargingFailureByOEM(filteredAllResultsForCharts, selectedOEM);
     
-    // Precharging Failure by Station Data - using filtered data
-    const prechargingFailureByStationData = processPrechargingFailureByStation(filteredAllResultsForCharts);
+    // Precharging Failure by Station Data - filtered by OEM if selected
+    const prechargingFailureByStationData = processPrechargingFailureByStation(filteredAllResultsForCharts, selectedOEM);
+    
+    // Precharging Failure by CPID Data - filtered by OEM if selected
+    const prechargingFailureByCPIDData = processPrechargingFailureByCPID(filteredAllResultsForCharts, selectedOEM);
 
     return (
         <motion.div
@@ -1289,7 +1506,8 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                                 networkByStation: stationPerformanceData,
                                 networkByCPID: cpidPerformanceData,
                                 prechargingByOEM: prechargingFailureData,
-                                prechargingByStation: prechargingFailureByStationData
+                                prechargingByStation: prechargingFailureByStationData,
+                                prechargingByCPID: prechargingFailureByCPIDData
                             });
                         }}
                         className="p-1.5 hover:bg-green-50 text-gray-500 hover:text-green-600 rounded-full transition-colors"
@@ -1355,10 +1573,10 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                         </DashboardCard>
                     </div>
 
-                    {/* Row 2: Network Performance by OEM (3 cols) + Error Summary (1 col) */}
+                    {/* Row 2: Negative Stops by OEM (3 cols) + Error Summary (1 col) */}
                     <div className="grid grid-cols-4 gap-3 h-[280px]">
                         <DashboardCard 
-                            title={selectedOEM ? `🔍 Network Performance by OEM - ${selectedOEM}` : "1. Network Performance by OEM (Neg Stop%)"} 
+                            title={selectedOEM ? `🔍 Negative Stops by OEM - ${selectedOEM}` : "1. Negative Stops by OEM (Neg Stop%)"} 
                             borderColorClass={selectedOEM ? "border-red-600" : "border-amber-700"} 
                             icon={Layers}
                             className="col-span-3"
@@ -1444,9 +1662,18 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                         </DashboardCard>
                     </div>
 
-                    {/* Row 3: Network Performance by Station (Full Width) */}
+                    {/* Row 3: Negative Stops by Station (Full Width) */}
                     <div className="grid grid-cols-1 gap-3 h-[280px]">
-                        <DashboardCard title="2. Network Performance by Station (Neg Stop%)" borderColorClass="border-red-600" icon={Layers}>
+                        <DashboardCard 
+                            title={selectedOEM ? `🔍 Negative Stops by Station - ${selectedOEM}` : "2. Negative Stops by Station (Neg Stop%)"} 
+                            borderColorClass={selectedOEM ? "border-red-600" : "border-red-600"} 
+                            icon={Layers}
+                        >
+                            {selectedOEM && (
+                                <div className="absolute top-12 right-4 bg-red-600 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-lg z-10 animate-pulse">
+                                    Filtered by OEM
+                                </div>
+                            )}
                             <div className={stationPerformanceData.length > 15 ? "overflow-x-auto h-full" : "h-full"}>
                                 <div style={{ minWidth: stationPerformanceData.length > 15 ? `${stationPerformanceData.length * 60}px` : '100%', height: '100%' }}>
                                     <ResponsiveContainer width="100%" height="100%">
@@ -1485,17 +1712,26 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                         </DashboardCard>
                     </div>
 
-                    {/* Row 4: Network Performance by CPID (Full Width) */}
+                    {/* Row 4: Negative Stops by CPID (Full Width) */}
                     <div className="grid grid-cols-1 gap-3 h-[280px]">
-                        <DashboardCard title="3. Network Performance by CPID (Neg Stop%)" borderColorClass="border-purple-600" icon={Layers}>
-                            <div className={cpidPerformanceData.length > 15 ? "overflow-x-auto h-full" : "h-full"}>
-                                <div style={{ minWidth: cpidPerformanceData.length > 15 ? `${cpidPerformanceData.length * 60}px` : '100%', height: '100%' }}>
+                        <DashboardCard 
+                            title={selectedOEM ? `🔍 Negative Stops by CPID - ${selectedOEM}` : "3. Negative Stops by CPID (Neg Stop%)"} 
+                            borderColorClass={selectedOEM ? "border-purple-600" : "border-purple-600"} 
+                            icon={Layers}
+                        >
+                            {selectedOEM && (
+                                <div className="absolute top-12 right-4 bg-purple-600 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-lg z-10 animate-pulse">
+                                    Filtered by OEM
+                                </div>
+                            )}
+                            <div className={cpidPerformanceData.length > 10 ? "overflow-x-auto h-full" : "h-full"}>
+                                <div style={{ minWidth: cpidPerformanceData.length > 10 ? `${cpidPerformanceData.length * 120}px` : '100%', height: '100%' }}>
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={cpidPerformanceData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
+                                        <BarChart data={cpidPerformanceData} margin={{ top: 20, right: 10, left: 0, bottom: 80 }}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                                             <XAxis
                                                 dataKey="name"
-                                                tick={{ fontSize: 9, fontWeight: 'bold' }}
+                                                tick={{ fontSize: 8, fontWeight: 'bold' }}
                                                 axisLine={false}
                                                 tickLine={false}
                                                 dy={10}
@@ -1528,7 +1764,16 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
 
                     {/* Row 5: Precharging Failure by OEM (Full Width) */}
                     <div className="grid grid-cols-1 gap-3 h-[280px]">
-                        <DashboardCard title="4. Precharging Failure by OEM" borderColorClass="border-orange-500" icon={Layers}>
+                        <DashboardCard 
+                            title={selectedOEM ? `🔍 Precharging Failure by OEM - ${selectedOEM}` : "4. Precharging Failure by OEM"} 
+                            borderColorClass={selectedOEM ? "border-orange-500" : "border-orange-500"} 
+                            icon={Layers}
+                        >
+                            {selectedOEM && (
+                                <div className="absolute top-12 right-4 bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-lg z-10 animate-pulse">
+                                    Filtered by OEM
+                                </div>
+                            )}
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={prechargingFailureData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -1564,7 +1809,16 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
 
                     {/* Row 5: Precharging Failure by Station (Full Width) */}
                     <div className="grid grid-cols-1 gap-3 h-[280px]">
-                        <DashboardCard title="5. Precharging Failure by Station" borderColorClass="border-purple-500" icon={Layers}>
+                        <DashboardCard 
+                            title={selectedOEM ? `🔍 Precharging Failure by Station - ${selectedOEM}` : "5. Precharging Failure by Station"} 
+                            borderColorClass={selectedOEM ? "border-purple-500" : "border-purple-500"} 
+                            icon={Layers}
+                        >
+                            {selectedOEM && (
+                                <div className="absolute top-12 right-4 bg-purple-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-lg z-10 animate-pulse">
+                                    Filtered by OEM
+                                </div>
+                            )}
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={prechargingFailureByStationData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
@@ -1598,9 +1852,58 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                         </DashboardCard>
                     </div>
 
-                    {/* Row 6: Power Quality (3 cols) + Auth Methods (1 col) */}
+                    {/* Row 6: Precharging Failure by CPID (Full Width) */}
+                    <div className="grid grid-cols-1 gap-3 h-[280px]">
+                        <DashboardCard 
+                            title={selectedOEM ? `🔍 Precharging Failure by CPID - ${selectedOEM}` : "6. Precharging Failure by CPID"} 
+                            borderColorClass={selectedOEM ? "border-amber-500" : "border-amber-500"} 
+                            icon={Layers}
+                        >
+                            {selectedOEM && (
+                                <div className="absolute top-12 right-4 bg-amber-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-lg z-10 animate-pulse">
+                                    Filtered by OEM
+                                </div>
+                            )}  
+                            <div className={prechargingFailureByCPIDData.length > 10 ? "overflow-x-auto h-full" : "h-full"}>
+                                <div style={{ minWidth: prechargingFailureByCPIDData.length > 10 ? `${prechargingFailureByCPIDData.length * 120}px` : '100%', height: '100%' }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={prechargingFailureByCPIDData} margin={{ top: 20, right: 10, left: 0, bottom: 80 }}>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                            <XAxis
+                                                dataKey="name"
+                                                tick={{ fontSize: 8, fontWeight: 'bold' }}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                dy={10}
+                                                interval={0}
+                                                angle={-45}
+                                                textAnchor="end"
+                                            />
+                                            <YAxis hide />
+                                            <Tooltip cursor={{ fill: '#FEF3C7', stroke: 'none' }} content={<CustomTooltip />} />
+                                            <Bar 
+                                                dataKey="value" 
+                                                radius={[6, 6, 0, 0]}
+                                                isAnimationActive={false}
+                                            >
+                                                <LabelList 
+                                                    dataKey="value" 
+                                                    position="top" 
+                                                    fill="#000" 
+                                                    fontSize={10} 
+                                                    fontWeight="bold"
+                                                />
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </DashboardCard>
+                    </div>
+
+                    {/* Row 7: Power Quality (3 cols) + Auth Methods (1 col) */}
                     <div className="grid grid-cols-4 gap-3 h-[280px]">
-                        <DashboardCard title="6. Power Quality" borderColorClass="border-green-500" icon={Activity} className="col-span-3">
+                        <DashboardCard title="7. Power Quality" borderColorClass="border-green-500" icon={Activity} className="col-span-3">
                             <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={lineData} margin={{ top: 10, right: 60, left: 20, bottom: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
