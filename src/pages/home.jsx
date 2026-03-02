@@ -307,21 +307,51 @@ export default function Home() {
         setTotalFiles(filesToProcess.length);
         let completed = 0;
 
-        // Process files sequentially to show progress
-        for (const { fileName, zipEntry } of filesToProcess) {
-          setCurrentFileName(fileName);
-          try {
-            const blob = await zipEntry.async('blob');
-            const extractedFile = new File([blob], fileName, { type: 'application/octet-stream' });
-            const data = await processFileAPI(extractedFile, selectedMode);
-            newResults[fileName] = data;
-          } catch (e) {
-            console.error(`Failed to process ${fileName}`, e);
-            newFailed.push({ name: fileName, reason: e.message });
-          }
-          completed++;
+        // 🚀 Process files in parallel batches of 9 for maximum performance
+        const BATCH_SIZE = 9;
+        console.log(`📦 Processing ${filesToProcess.length} files in batches of ${BATCH_SIZE}`);
+
+        for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
+          const batch = filesToProcess.slice(i, i + BATCH_SIZE);
+          const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+          const totalBatches = Math.ceil(filesToProcess.length / BATCH_SIZE);
+          
+          console.log(`🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} files)`);
+          
+          // Update current file name to show batch info
+          setCurrentFileName(`Batch ${batchNumber}/${totalBatches}: Processing ${batch.length} files...`);
+
+          // Process all files in the batch simultaneously
+          const batchPromises = batch.map(async ({ fileName, zipEntry }) => {
+            try {
+              const blob = await zipEntry.async('blob');
+              const extractedFile = new File([blob], fileName, { type: 'application/octet-stream' });
+              const data = await processFileAPI(extractedFile, selectedMode);
+              return { fileName, data, success: true };
+            } catch (e) {
+              console.error(`❌ Failed to process ${fileName}:`, e);
+              return { fileName, error: e.message, success: false };
+            }
+          });
+
+          // Wait for all files in this batch to complete
+          const batchResults = await Promise.all(batchPromises);
+
+          // Process results
+          batchResults.forEach(result => {
+            if (result.success) {
+              newResults[result.fileName] = result.data;
+            } else {
+              newFailed.push({ name: result.fileName, reason: result.error });
+            }
+            completed++;
+          });
+
+          // Update progress
           setProcessedFiles(completed);
           setUploadProgress(Math.round((completed / filesToProcess.length) * 100));
+          
+          console.log(`✅ Batch ${batchNumber} complete. Total processed: ${completed}/${filesToProcess.length}`);
         }
       } else {
         setTotalFiles(1);

@@ -1820,14 +1820,14 @@ export default function DashboardView({ result, onClose, selectedFiles, setSelec
                                 </div>
                             )}
                             <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={prechargingFailureByStationData} margin={{ top: 20, right: 10, left: 0, bottom: 60 }}>
+                                <BarChart data={prechargingFailureByStationData} margin={{ top: 20, right: 10, left: 0, bottom: 80 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                                     <XAxis
                                         dataKey="name"
                                         tick={{ fontSize: 9, fontWeight: 'bold' }}
                                         axisLine={false}
                                         tickLine={false}
-                                        dy={10}
+                                        dy={20}
                                         interval={0}
                                         angle={-45}
                                         textAnchor="end"
