@@ -64,7 +64,7 @@ function getDateRange(startDate, endDate) {
 
 // API endpoint to download logs
 app.post('/api/logs/download', async (req, res) => {
-  const { startDate, endDate, cpid, cpids, stationName } = req.body;
+  const { startDate, endDate, cpid, cpids, stationName, oemName } = req.body;
 
   if (!startDate) {
     return res.status(400).json({ error: 'Start date is required' });
@@ -80,6 +80,30 @@ app.post('/api/logs/download', async (req, res) => {
       // Use the array of selected CPIDs from checkboxes
       normalizedCpids = cpids.map(c => String(c).trim().replace(/^ocpp_/i, '')).filter(Boolean);
       console.log(`Filtering logs for selected CPIDs (${normalizedCpids.length}):`, normalizedCpids);
+    } else if (oemName && db) {
+      // Fetch all CPIDs for the given OEM name
+      try {
+        const cpDetails = await db.collection('cp_details').find({
+          'OEM Name': oemName
+        }).toArray();
+        
+        normalizedCpids = cpDetails.map(doc => {
+          const cpidValue = doc['Charge Point id'] || doc['Charge Point ID'] || doc['cpid'];
+          return String(cpidValue).replace(/^ocpp_/i, '');
+        }).filter(Boolean);
+        
+        // Remove duplicates
+        normalizedCpids = [...new Set(normalizedCpids)];
+        
+        if (normalizedCpids.length === 0) {
+          return res.status(404).json({ error: `No charge points found for OEM: ${oemName}` });
+        }
+        
+        console.log(`Found ${normalizedCpids.length} CPIDs for OEM "${oemName}":`, normalizedCpids);
+      } catch (mongoError) {
+        console.error('MongoDB query error:', mongoError);
+        return res.status(500).json({ error: 'Failed to fetch OEM data' });
+      }
     } else if (stationName && db) {
       // Fetch all CPIDs for the given station name
       try {
@@ -205,7 +229,9 @@ app.get('/', (req, res) => {
       'GET /api/health': 'Health check',
       'GET /api/stations': 'Get all station names',
       'GET /api/stations/:stationName/cpids': 'Get CPIDs for a specific station',
-      'POST /api/logs/download': 'Download logs (requires startDate, endDate, optional: cpid or stationName)'
+      'GET /api/oems': 'Get all OEM names',
+      'GET /api/oems/:oemName/cpids': 'Get CPIDs for a specific OEM',
+      'POST /api/logs/download': 'Download logs (requires startDate, endDate, optional: cpid, cpids, stationName, or oemName)'
     }
   });
 });
@@ -288,6 +314,85 @@ app.get('/api/stations/:stationName/cpids', async (req, res) => {
   } catch (error) {
     console.error('Error fetching station CPIDs:', error);
     res.status(500).json({ error: 'Failed to fetch station CPIDs' });
+  }
+});
+
+// Get all unique OEM names from MongoDB
+app.get('/api/oems', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not connected' });
+    }
+
+    const cpDetails = await db.collection('cp_details').find({}).toArray();
+    
+    // Extract unique OEM names
+    const oemNames = new Set();
+    cpDetails.forEach(doc => {
+      const oemName = doc['OEM Name'];
+      if (oemName) {
+        oemNames.add(oemName.trim());
+      }
+    });
+
+    const sortedOems = Array.from(oemNames).sort();
+    
+    res.json({ 
+      oems: sortedOems,
+      count: sortedOems.length 
+    });
+  } catch (error) {
+    console.error('Error fetching OEMs:', error);
+    res.status(500).json({ error: 'Failed to fetch OEMs' });
+  }
+});
+
+// Get CPIDs for a specific OEM
+app.get('/api/oems/:oemName/cpids', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not connected' });
+    }
+
+    const oemName = decodeURIComponent(req.params.oemName);
+    
+    const cpDetails = await db.collection('cp_details').find({
+      'OEM Name': oemName
+    }).toArray();
+
+    const cpids = cpDetails.map(doc => {
+      const cpidValue = doc['Charge Point id'] || doc['Charge Point ID'] || doc['cpid'];
+      const powerKw = doc['Power (kW)'] || 'N/A';
+      const stationName = doc['Location name/Station name'] || 'N/A';
+      
+      let displayName = `CPID: ${cpidValue}`;
+      if (doc['Station Code']) {
+        displayName += ` (${doc['Station Code']})`;
+      }
+      displayName += ` - ${stationName} - ${powerKw}kW`;
+      
+      return {
+        cpid: String(cpidValue),
+        displayName: displayName,
+        oem: oemName,
+        capacity: powerKw,
+        station: stationName
+      };
+    }).filter(item => item.cpid);
+
+    // Remove duplicates based on CPID value
+    const uniqueCpids = Array.from(
+      new Map(cpids.map(item => [item.cpid, item])).values()
+    );
+
+    res.json({
+      oem: oemName,
+      cpids: uniqueCpids,
+      count: uniqueCpids.length
+    });
+  } catch (error) {
+    console.error('Error fetching OEM CPIDs:', error);
+    res.status(500).json({ error: 'Failed to fetch OEM CPIDs' });
   }
 });
 

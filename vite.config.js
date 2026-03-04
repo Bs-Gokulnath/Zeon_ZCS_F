@@ -18,6 +18,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/api')
       },
+      '/api/oems': {
+        target: 'http://192.168.2.11:3000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '/api')
+      },
       '/api/health': {
         target: 'http://192.168.2.11:3000',
         changeOrigin: true,

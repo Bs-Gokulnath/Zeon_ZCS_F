@@ -19,6 +19,17 @@ const GetLogs = () => {
   const [selectedStationCpids, setSelectedStationCpids] = useState([]); // Selected CPIDs from station (array)
   const [loadingStationCpids, setLoadingStationCpids] = useState(false);
   const stationDropdownRef = useRef(null); // Ref for the station dropdown container
+  
+  // OEM filter states
+  const [oemName, setOemName] = useState(''); // Selected OEM
+  const [oemSearchInput, setOemSearchInput] = useState(''); // Search input for filtering OEMs
+  const [showOemDropdown, setShowOemDropdown] = useState(false); // Show/hide OEM dropdown
+  const [oems, setOems] = useState([]); // List of all OEMs
+  const [loadingOems, setLoadingOems] = useState(false);
+  const [oemCpids, setOemCpids] = useState([]); // CPIDs available for selected OEM
+  const [selectedOemCpids, setSelectedOemCpids] = useState([]); // Selected CPIDs from OEM (array)
+  const [loadingOemCpids, setLoadingOemCpids] = useState(false);
+  const oemDropdownRef = useRef(null); // Ref for the OEM dropdown container
 
   const daysInMonth = (date) => {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -81,11 +92,33 @@ const GetLogs = () => {
     fetchStations();
   }, []);
 
+  // Fetch OEM names on component mount
+  React.useEffect(() => {
+    const fetchOems = async () => {
+      setLoadingOems(true);
+      try {
+        const response = await fetch('/api/oems');
+        if (response.ok) {
+          const data = await response.json();
+          setOems(data.oems || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch OEMs:', err);
+      } finally {
+        setLoadingOems(false);
+      }
+    };
+    fetchOems();
+  }, []);
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (stationDropdownRef.current && !stationDropdownRef.current.contains(event.target)) {
         setShowStationDropdown(false);
+      }
+      if (oemDropdownRef.current && !oemDropdownRef.current.contains(event.target)) {
+        setShowOemDropdown(false);
       }
     };
 
@@ -109,6 +142,11 @@ const GetLogs = () => {
     if (station) {
       setCpid(''); // Clear manual CPID if station is selected
       setSelectedStationCpids([]); // Clear selected station CPIDs
+      // Clear OEM selection
+      setOemName('');
+      setOemSearchInput('');
+      setOemCpids([]);
+      setSelectedOemCpids([]);
       
       // Fetch CPIDs for this station
       setLoadingStationCpids(true);
@@ -150,6 +188,65 @@ const GetLogs = () => {
     setSelectedStationCpids([]);
   };
 
+  // Filter OEMs based on search input
+  const filteredOems = oems.filter(oem =>
+    oemSearchInput 
+      ? oem.toLowerCase().includes(oemSearchInput.toLowerCase())
+      : true // Show all OEMs when input is empty
+  );
+
+  const handleOemSelect = async (oem) => {
+    setOemName(oem);
+    setOemSearchInput(oem);
+    setShowOemDropdown(false);
+    if (oem) {
+      setCpid(''); // Clear manual CPID if OEM is selected
+      setStationName(''); // Clear station selection
+      setStationSearchInput('');
+      setStationCpids([]);
+      setSelectedStationCpids([]);
+      setSelectedOemCpids([]); // Clear selected OEM CPIDs
+      
+      // Fetch CPIDs for this OEM
+      setLoadingOemCpids(true);
+      try {
+        const response = await fetch(`/api/oems/${encodeURIComponent(oem)}/cpids`);
+        if (response.ok) {
+          const data = await response.json();
+          setOemCpids(data.cpids || []);
+        } else {
+          setOemCpids([]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch OEM CPIDs:', err);
+        setOemCpids([]);
+      } finally {
+        setLoadingOemCpids(false);
+      }
+    } else {
+      setOemCpids([]);
+      setSelectedOemCpids([]);
+    }
+  };
+
+  const handleOemCpidCheckboxChange = (cpid) => {
+    setSelectedOemCpids(prev => {
+      if (prev.includes(cpid)) {
+        return prev.filter(c => c !== cpid);
+      } else {
+        return [...prev, cpid];
+      }
+    });
+  };
+
+  const handleSelectAllOemCpids = () => {
+    setSelectedOemCpids(oemCpids.map(cpidInfo => cpidInfo.cpid));
+  };
+
+  const handleDeselectAllOemCpids = () => {
+    setSelectedOemCpids([]);
+  };
+
   const handleFetchData = async () => {
     if (!selectedDate) {
       setError('Please select a date');
@@ -183,8 +280,9 @@ const GetLogs = () => {
           startDate: start,
           endDate: end,
           cpid: cpid.trim() || null, // Manual CPID entry
-          cpids: selectedStationCpids.length > 0 ? selectedStationCpids : null, // Array of selected CPIDs
-          stationName: (selectedStationCpids.length === 0 && !cpid.trim() && stationName) ? stationName : null // Send station name only if no CPIDs selected
+          cpids: (selectedStationCpids.length > 0 ? selectedStationCpids : (selectedOemCpids.length > 0 ? selectedOemCpids : null)), // Array of selected CPIDs (from station or OEM)
+          stationName: (selectedStationCpids.length === 0 && selectedOemCpids.length === 0 && !cpid.trim() && stationName && !oemName) ? stationName : null, // Send station name only if no CPIDs selected and no OEM
+          oemName: (selectedOemCpids.length === 0 && selectedStationCpids.length === 0 && !cpid.trim() && !stationName && oemName) ? oemName : null // Send OEM name only if no CPIDs selected and no station
         }),
       });
 
@@ -481,6 +579,145 @@ const GetLogs = () => {
               </div>
             )}
 
+            {/* OEM Name Filter Dropdown */}
+            <div className="relative" ref={oemDropdownRef}>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                OR Filter by OEM Manufacturer (Optional)
+              </label>
+              <input
+                type="text"
+                value={oemSearchInput}
+                onChange={(e) => {
+                  setOemSearchInput(e.target.value);
+                  setShowOemDropdown(true);
+                  if (!e.target.value) {
+                    setOemName('');
+                  }
+                }}
+                onFocus={() => setShowOemDropdown(true)}
+                placeholder="Click to see all OEMs or type to search..."
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={loadingOems || !!stationName}
+              />
+              
+              {/* Dropdown with filtered OEMs */}
+              {showOemDropdown && loadingOems && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4 text-sm text-gray-500 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Loading OEMs...
+                  </div>
+                </div>
+              )}
+              
+              {showOemDropdown && !loadingOems && filteredOems.length > 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-white border-2 border-green-300 rounded-lg shadow-2xl max-h-80 overflow-y-auto">
+                  <div className="sticky top-0 bg-green-50 px-4 py-2 text-xs font-semibold text-green-800 border-b-2 border-green-200 z-10">
+                    {filteredOems.length} OEM Manufacturers Available
+                  </div>
+                  {filteredOems.map((oem, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleOemSelect(oem)}
+                      className="w-full text-left px-4 py-2.5 hover:bg-green-50 active:bg-green-100 border-b border-gray-100 last:border-b-0 text-sm transition-colors"
+                    >
+                      <span className="block truncate">{oem}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              
+              {showOemDropdown && !loadingOems && filteredOems.length === 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4 text-sm text-gray-500 text-center">
+                  {oemSearchInput ? 'No OEMs match your search' : 'No OEMs available'}
+                </div>
+              )}
+              
+              {/* Clear button */}
+              {oemSearchInput && (
+                <button
+                  onClick={() => {
+                    setOemSearchInput('');
+                    setOemName('');
+                    setShowOemDropdown(false);
+                  }}
+                  className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+              
+              <p className="mt-1 text-xs text-gray-500">
+                {loadingOems 
+                  ? 'Loading OEMs...' 
+                  : oemName 
+                  ? `✓ Selected: ${oemName}` 
+                  : `Click to view all ${oems.length} OEM manufacturers (disabled when station is selected)`}
+              </p>
+            </div>
+
+            {/* OEM CPIDs Filter - Shows when OEM is selected */}
+            {oemName && oemCpids.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Charge Points from OEM (Optional)
+                </label>
+                <div className="border border-gray-300 rounded-lg p-4 bg-gray-50 max-h-80 overflow-y-auto">
+                  {/* Select All / Deselect All buttons */}
+                  <div className="flex gap-2 mb-3 pb-3 border-b border-gray-300">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllOemCpids}
+                      className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 font-medium"
+                    >
+                      Select All ({oemCpids.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeselectAllOemCpids}
+                      className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 font-medium"
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+                  
+                  {/* Checkboxes for each CPID */}
+                  <div className="space-y-2">
+                    {oemCpids.map((cpidInfo, idx) => (
+                      <label
+                        key={idx}
+                        className="flex items-center space-x-3 p-2 hover:bg-white rounded cursor-pointer transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedOemCpids.includes(cpidInfo.cpid)}
+                          onChange={() => handleOemCpidCheckboxChange(cpidInfo.cpid)}
+                          className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                        />
+                        <span className="text-sm text-gray-700">{cpidInfo.displayName}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {loadingOemCpids 
+                    ? 'Loading charge points...' 
+                    : selectedOemCpids.length > 0
+                    ? `✓ Selected ${selectedOemCpids.length} CPID${selectedOemCpids.length > 1 ? 's' : ''}: ${selectedOemCpids.join(', ')}` 
+                    : `Select specific charge point(s) or leave empty to download all ${oemCpids.length} CPIDs from ${oemName}`}
+                </p>
+              </div>
+            )}
+
+            {oemName && oemCpids.length === 0 && !loadingOemCpids && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                ⚠️ No charge points found for this OEM.
+              </div>
+            )}
+
             {/* CPID Filter Input */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -497,13 +734,18 @@ const GetLogs = () => {
                     setShowStationDropdown(false);
                     setStationCpids([]);
                     setSelectedStationCpids([]);
+                    setOemName(''); // Clear OEM if CPID is entered
+                    setOemSearchInput('');
+                    setShowOemDropdown(false);
+                    setOemCpids([]);
+                    setSelectedOemCpids([]);
                   }
                 }}
                 placeholder="e.g., 100028 or ocpp_100028"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                disabled={!!stationName}
+                disabled={!!stationName || !!oemName}
               />
-              <p className="mt-1 text-xs text-gray-500">Enter a specific CPID (disabled when station is selected)</p>
+              <p className="mt-1 text-xs text-gray-500">Enter a specific CPID (disabled when station or OEM is selected)</p>
             </div>
 
             {/* Quick Date Range Buttons */}
@@ -598,6 +840,11 @@ const GetLogs = () => {
                     setShowStationDropdown(false);
                     setStationCpids([]);
                     setSelectedStationCpids([]);
+                    setOemName('');
+                    setOemSearchInput('');
+                    setShowOemDropdown(false);
+                    setOemCpids([]);
+                    setSelectedOemCpids([]);
                     setError('');
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
@@ -615,7 +862,9 @@ const GetLogs = () => {
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
             <li><strong>Station Filter:</strong> Select a station name to see all charge points at that location</li>
             <li><strong>Station CPID Checkboxes:</strong> After selecting a station, check specific charge point(s) you want to download (or leave all unchecked for all CPIDs)</li>
-            <li><strong>Manual CPID Filter:</strong> Or enter a specific Charge Point ID directly (bypasses station selection)</li>
+            <li><strong>OEM Filter:</strong> Or select an OEM manufacturer to see all charge points from that brand across all stations</li>
+            <li><strong>OEM CPID Checkboxes:</strong> After selecting an OEM, check specific charge point(s) you want to download (or leave all unchecked for all CPIDs from that OEM)</li>
+            <li><strong>Manual CPID Filter:</strong> Or enter a specific Charge Point ID directly (bypasses station and OEM selection)</li>
             <li><strong>Date Range:</strong> Use quick buttons (Last 7, 15, 30, 60 days) or click the date input for custom selection</li>
             <li>Click a single date for logs from that day, or select start and end dates for a range</li>
             <li>Leave all filters empty to download all logs for the selected date range</li>
