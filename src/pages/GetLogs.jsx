@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Download, X } from 'lucide-react';
 import zeonLogo from '../assets/zeon_charging.webp';
 
@@ -9,6 +9,13 @@ const GetLogs = () => {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cpid, setCpid] = useState(''); // New state for CPID filter
+  const [stationName, setStationName] = useState(''); // New state for station filter
+  const [stationSearchInput, setStationSearchInput] = useState(''); // Search input for filtering stations
+  const [showStationDropdown, setShowStationDropdown] = useState(false); // Show/hide dropdown
+  const [stations, setStations] = useState([]); // List of all stations
+  const [loadingStations, setLoadingStations] = useState(false);
+  const stationDropdownRef = useRef(null); // Ref for the station dropdown container
 
   const daysInMonth = (date) => {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -43,6 +50,64 @@ const GetLogs = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1));
   };
 
+  const handleQuickDateRange = (days) => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+    setSelectedDate(start);
+    setSelectedEndDate(end);
+    setError('');
+  };
+
+  // Fetch station names on component mount
+  React.useEffect(() => {
+    const fetchStations = async () => {
+      setLoadingStations(true);
+      try {
+        const response = await fetch('/api/stations');
+        if (response.ok) {
+          const data = await response.json();
+          setStations(data.stations || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch stations:', err);
+      } finally {
+        setLoadingStations(false);
+      }
+    };
+    fetchStations();
+  }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (stationDropdownRef.current && !stationDropdownRef.current.contains(event.target)) {
+        setShowStationDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // Filter stations based on search input
+  const filteredStations = stations.filter(station =>
+    stationSearchInput 
+      ? station.toLowerCase().includes(stationSearchInput.toLowerCase())
+      : true // Show all stations when input is empty
+  );
+
+  const handleStationSelect = (station) => {
+    setStationName(station);
+    setStationSearchInput(station);
+    setShowStationDropdown(false);
+    if (station) {
+      setCpid(''); // Clear CPID if station is selected
+    }
+  };
+
   const handleFetchData = async () => {
     if (!selectedDate) {
       setError('Please select a date');
@@ -67,32 +132,65 @@ const GetLogs = () => {
       const end = formatForServer(endDate);
 
       // Call backend API to fetch and zip logs
-      const response = await fetch('http://localhost:3001/api/logs/download', {
+      const response = await fetch('/api/logs/download', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           startDate: start,
-          endDate: end
+          endDate: end,
+          cpid: cpid.trim() || null, // Send cpid if provided
+          stationName: stationName || null // Send station name if provided
         }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch logs');
+        const errorText = await response.text();
+        console.error('Server error:', errorText);
+        throw new Error(`Failed to fetch logs: ${response.status}`);
       }
 
       // Download the zip file
       const blob = await response.blob();
+      console.log('Blob size:', blob.size, 'bytes');
+      
+      if (blob.size === 0) {
+        throw new Error('No log files found for the selected date(s)');
+      }
+      
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `logs_${start.year}-${start.month}-${start.day}_to_${end.year}-${end.month}-${end.day}.zip`;
+      
+      // Create user-friendly filename
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const startMonth = monthNames[parseInt(start.month) - 1];
+      const endMonth = monthNames[parseInt(end.month) - 1];
+      
+      let filename;
+      const filterPrefix = stationName ? stationName.replace(/[^a-zA-Z0-9]/g, '_') : cpid;
+      if (start.year === end.year && start.month === end.month && start.day === end.day) {
+        // Single date
+        filename = filterPrefix ? `${filterPrefix}_${start.day}th_${startMonth}_${start.year}.zip` : `${start.day}th ${startMonth} ${start.year}.zip`;
+      } else {
+        // Date range
+        filename = filterPrefix 
+          ? `${filterPrefix}_${start.day}th_${startMonth}_to_${end.day}th_${endMonth}_${end.year}.zip`
+          : `${start.day}th ${startMonth} to ${end.day}th ${endMonth} ${end.year}.zip`;
+      }
+      
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      
+      // Clean up after a short delay to ensure download starts
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 100);
 
+      console.log('Download triggered successfully');
       setShowCalendar(false);
     } catch (err) {
       setError(err.message || 'Failed to download logs');
@@ -195,10 +293,152 @@ const GetLogs = () => {
           <h2 className="text-xl font-semibold text-gray-900 mb-6">Download Server Logs</h2>
           
           <div className="space-y-4">
+            {/* Station Name Filter Dropdown */}
+            <div className="relative" ref={stationDropdownRef}>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Filter by Station Name (Optional)
+              </label>
+              <input
+                type="text"
+                value={stationSearchInput}
+                onChange={(e) => {
+                  setStationSearchInput(e.target.value);
+                  setShowStationDropdown(true);
+                  if (!e.target.value) {
+                    setStationName('');
+                  }
+                }}
+                onFocus={() => setShowStationDropdown(true)}
+                placeholder="Click to see all stations or type to search... (408 available)"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={loadingStations}
+              />
+              
+              {/* Dropdown with filtered stations */}
+              {showStationDropdown && loadingStations && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4 text-sm text-gray-500 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Loading stations...
+                  </div>
+                </div>
+              )}
+              
+              {showStationDropdown && !loadingStations && filteredStations.length > 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-white border-2 border-blue-300 rounded-lg shadow-2xl max-h-80 overflow-y-auto">
+                  <div className="sticky top-0 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-800 border-b-2 border-blue-200 z-10">
+                    Showing {Math.min(100, filteredStations.length)} of {filteredStations.length} stations
+                  </div>
+                  {filteredStations.slice(0, 100).map((station, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleStationSelect(station)}
+                      className="w-full text-left px-4 py-2.5 hover:bg-blue-50 active:bg-blue-100 border-b border-gray-100 last:border-b-0 text-sm transition-colors"
+                    >
+                      <span className="block truncate">{station}</span>
+                    </button>
+                  ))}
+                  {filteredStations.length > 100 && (
+                    <div className="sticky bottom-0 px-4 py-2 text-xs font-medium text-gray-600 bg-yellow-50 border-t-2 border-yellow-200 z-10">
+                      ⚠️ {filteredStations.length - 100} more stations available. Type to filter results.
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Show message if no stations loaded */}
+              {showStationDropdown && !loadingStations && filteredStations.length === 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4 text-sm text-gray-500 text-center">
+                  {stationSearchInput ? 'No stations match your search' : 'No stations available'}
+                </div>
+              )}
+              
+              {/* Clear button */}
+              {stationSearchInput && (
+                <button
+                  onClick={() => {
+                    setStationSearchInput('');
+                    setStationName('');
+                    setShowStationDropdown(false);
+                  }}
+                  className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+              
+              <p className="mt-1 text-xs text-gray-500">
+                {loadingStations 
+                  ? 'Loading stations...' 
+                  : stationName 
+                  ? `✓ Selected: ${stationName}` 
+                  : `Click to view all ${stations.length} stations or type to filter`}
+              </p>
+            </div>
+
+            {/* CPID Filter Input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                OR Filter by Charge Point ID (Optional)
+              </label>
+              <input
+                type="text"
+                value={cpid}
+                onChange={(e) => {
+                  setCpid(e.target.value);
+                  if (e.target.value) {
+                    setStationName(''); // Clear station if CPID is entered
+                    setStationSearchInput('');
+                    setShowStationDropdown(false);
+                  }
+                }}
+                placeholder="e.g., 100028 or ocpp_100028"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={!!stationName}
+              />
+              <p className="mt-1 text-xs text-gray-500">Enter a specific CPID (disabled when station is selected)</p>
+            </div>
+
+            {/* Quick Date Range Buttons */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Quick Date Range
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => handleQuickDateRange(7)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+                >
+                  Last 7 Days
+                </button>
+                <button
+                  onClick={() => handleQuickDateRange(15)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+                >
+                  Last 15 Days
+                </button>
+                <button
+                  onClick={() => handleQuickDateRange(30)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+                >
+                  Last 30 Days
+                </button>
+                <button
+                  onClick={() => handleQuickDateRange(60)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+                >
+                  Last 60 Days
+                </button>
+              </div>
+            </div>
+
             {/* Date Selection Input */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Date or Date Range
+                Select Date or Date Range (Custom)
               </label>
               <div className="relative">
                 <input
@@ -248,11 +488,15 @@ const GetLogs = () => {
                   onClick={() => {
                     setSelectedDate(null);
                     setSelectedEndDate(null);
+                    setCpid('');
+                    setStationName('');
+                    setStationSearchInput('');
+                    setShowStationDropdown(false);
                     setError('');
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
-                  Clear Selection
+                  Clear All
                 </button>
               )}
             </div>
@@ -263,10 +507,12 @@ const GetLogs = () => {
         <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="font-semibold text-blue-900 mb-2">Instructions:</h3>
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-            <li>Click on the date input to open the calendar</li>
-            <li>Click a single date for logs from that day</li>
-            <li>Click a start date, then an end date to select a range</li>
-            <li>Logs will be downloaded as a zip file to your computer</li>
+            <li><strong>Station Filter:</strong> Select a station name to download logs for all charge points at that location</li>
+            <li><strong>CPID Filter:</strong> Or enter a specific Charge Point ID (CPID) to download logs for just that charger</li>
+            <li><strong>Date Range:</strong> Use quick buttons (Last 7, 15, 30, 60 days) or click the date input for custom selection</li>
+            <li>Click a single date for logs from that day, or select start and end dates for a range</li>
+            <li>Leave all filters empty to download all logs for the selected date range</li>
+            <li>Logs are downloaded as a zip file containing CSV files in format: ocpp_[CPID]_[DATE].csv</li>
           </ul>
         </div>
       </main>

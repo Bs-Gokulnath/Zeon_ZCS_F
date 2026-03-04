@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import JSZip from 'jszip';
 import { generateChargerHealthPDF } from '../utils/pdfGenerator';
 import { exportConnectorsToExcel, exportConnectorsToCSV } from '../utils/excelExporter';
@@ -106,6 +107,8 @@ const aggregateResults = (resultsList) => {
 };
 
 export default function Home() {
+  const navigate = useNavigate();
+  
   // Initialize state from localStorage if available
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -583,6 +586,18 @@ export default function Home() {
                   ) : (
                     'Update CP Report'
                   )}
+                </button>
+
+                {/* Download Logs Button */}
+                <button
+                  onClick={() => navigate('/getlogs')}
+                  className="ml-2 bg-green-600 text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-green-700 transition-all duration-300 shadow-md hover:shadow-lg flex items-center gap-2"
+                  title="Download Logs"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download Logs
                 </button>
               </div>
 
