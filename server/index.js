@@ -64,7 +64,7 @@ function getDateRange(startDate, endDate) {
 
 // API endpoint to download logs
 app.post('/api/logs/download', async (req, res) => {
-  const { startDate, endDate, cpid, stationName } = req.body;
+  const { startDate, endDate, cpid, cpids, stationName } = req.body;
 
   if (!startDate) {
     return res.status(400).json({ error: 'Start date is required' });
@@ -76,13 +76,17 @@ app.post('/api/logs/download', async (req, res) => {
     // Normalize CPID - remove 'ocpp_' prefix if present and trim
     let normalizedCpids = [];
     
-    if (stationName && db) {
+    if (cpids && Array.isArray(cpids) && cpids.length > 0) {
+      // Use the array of selected CPIDs from checkboxes
+      normalizedCpids = cpids.map(c => String(c).trim().replace(/^ocpp_/i, '')).filter(Boolean);
+      console.log(`Filtering logs for selected CPIDs (${normalizedCpids.length}):`, normalizedCpids);
+    } else if (stationName && db) {
       // Fetch all CPIDs for the given station name
       try {
         const cpDetails = await db.collection('cp_details').find({
           $or: [
-            { 'Location name/Station name': { $regex: stationName, $options: 'i' } },
-            { 'Station Alias Name': { $regex: stationName, $options: 'i' } }
+            { 'Location name/Station name': stationName },
+            { 'Station Alias Name': stationName }
           ]
         }).toArray();
         
@@ -247,23 +251,39 @@ app.get('/api/stations/:stationName/cpids', async (req, res) => {
     
     const cpDetails = await db.collection('cp_details').find({
       $or: [
-        { 'Location name/Station name': { $regex: stationName, $options: 'i' } },
-        { 'Station Alias Name': { $regex: stationName, $options: 'i' } }
+        { 'Location name/Station name': stationName },
+        { 'Station Alias Name': stationName }
       ]
     }).toArray();
 
     const cpids = cpDetails.map(doc => {
       const cpidValue = doc['Charge Point id'] || doc['Charge Point ID'] || doc['cpid'];
+      const oemName = doc['OEM Name'] || 'N/A';
+      const powerKw = doc['Power (kW)'] || 'N/A';
+      
+      let displayName = `CPID: ${cpidValue}`;
+      if (doc['Station Code']) {
+        displayName += ` (${doc['Station Code']})`;
+      }
+      displayName += ` - ${oemName} - ${powerKw}kW`;
+      
       return {
         cpid: String(cpidValue),
-        displayName: `CPID: ${cpidValue}` + (doc['Station Code'] ? ` (${doc['Station Code']})` : '')
+        displayName: displayName,
+        oem: oemName,
+        capacity: powerKw
       };
     }).filter(item => item.cpid);
 
+    // Remove duplicates based on CPID value
+    const uniqueCpids = Array.from(
+      new Map(cpids.map(item => [item.cpid, item])).values()
+    );
+
     res.json({
       station: stationName,
-      cpids: cpids,
-      count: cpids.length
+      cpids: uniqueCpids,
+      count: uniqueCpids.length
     });
   } catch (error) {
     console.error('Error fetching station CPIDs:', error);

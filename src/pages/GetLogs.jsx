@@ -16,7 +16,7 @@ const GetLogs = () => {
   const [stations, setStations] = useState([]); // List of all stations
   const [loadingStations, setLoadingStations] = useState(false);
   const [stationCpids, setStationCpids] = useState([]); // CPIDs available at selected station
-  const [selectedStationCpid, setSelectedStationCpid] = useState(''); // Selected CPID from station
+  const [selectedStationCpids, setSelectedStationCpids] = useState([]); // Selected CPIDs from station (array)
   const [loadingStationCpids, setLoadingStationCpids] = useState(false);
   const stationDropdownRef = useRef(null); // Ref for the station dropdown container
 
@@ -108,7 +108,7 @@ const GetLogs = () => {
     setShowStationDropdown(false);
     if (station) {
       setCpid(''); // Clear manual CPID if station is selected
-      setSelectedStationCpid(''); // Clear selected station CPID
+      setSelectedStationCpids([]); // Clear selected station CPIDs
       
       // Fetch CPIDs for this station
       setLoadingStationCpids(true);
@@ -128,8 +128,26 @@ const GetLogs = () => {
       }
     } else {
       setStationCpids([]);
-      setSelectedStationCpid('');
+      setSelectedStationCpids([]);
     }
+  };
+
+  const handleCpidCheckboxChange = (cpid) => {
+    setSelectedStationCpids(prev => {
+      if (prev.includes(cpid)) {
+        return prev.filter(c => c !== cpid);
+      } else {
+        return [...prev, cpid];
+      }
+    });
+  };
+
+  const handleSelectAllCpids = () => {
+    setSelectedStationCpids(stationCpids.map(cpidInfo => cpidInfo.cpid));
+  };
+
+  const handleDeselectAllCpids = () => {
+    setSelectedStationCpids([]);
   };
 
   const handleFetchData = async () => {
@@ -164,8 +182,9 @@ const GetLogs = () => {
         body: JSON.stringify({
           startDate: start,
           endDate: end,
-          cpid: (selectedStationCpid || cpid.trim()) || null, // Use station CPID if selected, otherwise manual CPID
-          stationName: (selectedStationCpid ? null : stationName) || null // Send station name only if no specific CPID selected
+          cpid: cpid.trim() || null, // Manual CPID entry
+          cpids: selectedStationCpids.length > 0 ? selectedStationCpids : null, // Array of selected CPIDs
+          stationName: (selectedStationCpids.length === 0 && !cpid.trim() && stationName) ? stationName : null // Send station name only if no CPIDs selected
         }),
       });
 
@@ -407,27 +426,51 @@ const GetLogs = () => {
             {stationName && stationCpids.length > 0 && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Charge Point from Station (Optional)
+                  Select Charge Points from Station (Optional)
                 </label>
-                <select
-                  value={selectedStationCpid}
-                  onChange={(e) => setSelectedStationCpid(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={loadingStationCpids}
-                >
-                  <option value="">-- All CPIDs at this station ({stationCpids.length}) --</option>
-                  {stationCpids.map((cpidInfo, idx) => (
-                    <option key={idx} value={cpidInfo.cpid}>
-                      {cpidInfo.displayName}
-                    </option>
-                  ))}
-                </select>
+                <div className="border border-gray-300 rounded-lg p-4 bg-gray-50 max-h-80 overflow-y-auto">
+                  {/* Select All / Deselect All buttons */}
+                  <div className="flex gap-2 mb-3 pb-3 border-b border-gray-300">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllCpids}
+                      className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 font-medium"
+                    >
+                      Select All ({stationCpids.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeselectAllCpids}
+                      className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 font-medium"
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+                  
+                  {/* Checkboxes for each CPID */}
+                  <div className="space-y-2">
+                    {stationCpids.map((cpidInfo, idx) => (
+                      <label
+                        key={idx}
+                        className="flex items-center space-x-3 p-2 hover:bg-white rounded cursor-pointer transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedStationCpids.includes(cpidInfo.cpid)}
+                          onChange={() => handleCpidCheckboxChange(cpidInfo.cpid)}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700">{cpidInfo.displayName}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <p className="mt-1 text-xs text-gray-500">
                   {loadingStationCpids 
                     ? 'Loading charge points...' 
-                    : selectedStationCpid 
-                    ? `✓ Selected CPID: ${selectedStationCpid}` 
-                    : `Select a specific charge point or leave empty to download all ${stationCpids.length} CPIDs from this station`}
+                    : selectedStationCpids.length > 0
+                    ? `✓ Selected ${selectedStationCpids.length} CPID${selectedStationCpids.length > 1 ? 's' : ''}: ${selectedStationCpids.join(', ')}` 
+                    : `Select specific charge point(s) or leave empty to download all ${stationCpids.length} CPIDs from this station`}
                 </p>
               </div>
             )}
@@ -453,7 +496,7 @@ const GetLogs = () => {
                     setStationSearchInput('');
                     setShowStationDropdown(false);
                     setStationCpids([]);
-                    setSelectedStationCpid('');
+                    setSelectedStationCpids([]);
                   }
                 }}
                 placeholder="e.g., 100028 or ocpp_100028"
@@ -554,7 +597,7 @@ const GetLogs = () => {
                     setStationSearchInput('');
                     setShowStationDropdown(false);
                     setStationCpids([]);
-                    setSelectedStationCpid('');
+                    setSelectedStationCpids([]);
                     setError('');
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
@@ -571,7 +614,7 @@ const GetLogs = () => {
           <h3 className="font-semibold text-blue-900 mb-2">Instructions:</h3>
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
             <li><strong>Station Filter:</strong> Select a station name to see all charge points at that location</li>
-            <li><strong>Station CPID Filter:</strong> After selecting a station, you can optionally filter to specific charge point(s) within that station</li>
+            <li><strong>Station CPID Checkboxes:</strong> After selecting a station, check specific charge point(s) you want to download (or leave all unchecked for all CPIDs)</li>
             <li><strong>Manual CPID Filter:</strong> Or enter a specific Charge Point ID directly (bypasses station selection)</li>
             <li><strong>Date Range:</strong> Use quick buttons (Last 7, 15, 30, 60 days) or click the date input for custom selection</li>
             <li>Click a single date for logs from that day, or select start and end dates for a range</li>
