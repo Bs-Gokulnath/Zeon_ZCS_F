@@ -200,6 +200,7 @@ app.get('/', (req, res) => {
       'GET /': 'This page',
       'GET /api/health': 'Health check',
       'GET /api/stations': 'Get all station names',
+      'GET /api/stations/:stationName/cpids': 'Get CPIDs for a specific station',
       'POST /api/logs/download': 'Download logs (requires startDate, endDate, optional: cpid or stationName)'
     }
   });
@@ -232,6 +233,41 @@ app.get('/api/stations', async (req, res) => {
   } catch (error) {
     console.error('Error fetching stations:', error);
     res.status(500).json({ error: 'Failed to fetch stations' });
+  }
+});
+
+// Get CPIDs for a specific station
+app.get('/api/stations/:stationName/cpids', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not connected' });
+    }
+
+    const stationName = decodeURIComponent(req.params.stationName);
+    
+    const cpDetails = await db.collection('cp_details').find({
+      $or: [
+        { 'Location name/Station name': { $regex: stationName, $options: 'i' } },
+        { 'Station Alias Name': { $regex: stationName, $options: 'i' } }
+      ]
+    }).toArray();
+
+    const cpids = cpDetails.map(doc => {
+      const cpidValue = doc['Charge Point id'] || doc['Charge Point ID'] || doc['cpid'];
+      return {
+        cpid: String(cpidValue),
+        displayName: `CPID: ${cpidValue}` + (doc['Station Code'] ? ` (${doc['Station Code']})` : '')
+      };
+    }).filter(item => item.cpid);
+
+    res.json({
+      station: stationName,
+      cpids: cpids,
+      count: cpids.length
+    });
+  } catch (error) {
+    console.error('Error fetching station CPIDs:', error);
+    res.status(500).json({ error: 'Failed to fetch station CPIDs' });
   }
 });
 

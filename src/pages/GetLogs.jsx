@@ -15,6 +15,9 @@ const GetLogs = () => {
   const [showStationDropdown, setShowStationDropdown] = useState(false); // Show/hide dropdown
   const [stations, setStations] = useState([]); // List of all stations
   const [loadingStations, setLoadingStations] = useState(false);
+  const [stationCpids, setStationCpids] = useState([]); // CPIDs available at selected station
+  const [selectedStationCpid, setSelectedStationCpid] = useState(''); // Selected CPID from station
+  const [loadingStationCpids, setLoadingStationCpids] = useState(false);
   const stationDropdownRef = useRef(null); // Ref for the station dropdown container
 
   const daysInMonth = (date) => {
@@ -99,12 +102,33 @@ const GetLogs = () => {
       : true // Show all stations when input is empty
   );
 
-  const handleStationSelect = (station) => {
+  const handleStationSelect = async (station) => {
     setStationName(station);
     setStationSearchInput(station);
     setShowStationDropdown(false);
     if (station) {
-      setCpid(''); // Clear CPID if station is selected
+      setCpid(''); // Clear manual CPID if station is selected
+      setSelectedStationCpid(''); // Clear selected station CPID
+      
+      // Fetch CPIDs for this station
+      setLoadingStationCpids(true);
+      try {
+        const response = await fetch(`/api/stations/${encodeURIComponent(station)}/cpids`);
+        if (response.ok) {
+          const data = await response.json();
+          setStationCpids(data.cpids || []);
+        } else {
+          setStationCpids([]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch station CPIDs:', err);
+        setStationCpids([]);
+      } finally {
+        setLoadingStationCpids(false);
+      }
+    } else {
+      setStationCpids([]);
+      setSelectedStationCpid('');
     }
   };
 
@@ -140,8 +164,8 @@ const GetLogs = () => {
         body: JSON.stringify({
           startDate: start,
           endDate: end,
-          cpid: cpid.trim() || null, // Send cpid if provided
-          stationName: stationName || null // Send station name if provided
+          cpid: (selectedStationCpid || cpid.trim()) || null, // Use station CPID if selected, otherwise manual CPID
+          stationName: (selectedStationCpid ? null : stationName) || null // Send station name only if no specific CPID selected
         }),
       });
 
@@ -379,6 +403,41 @@ const GetLogs = () => {
               </p>
             </div>
 
+            {/* Station CPIDs Filter - Shows when station is selected */}
+            {stationName && stationCpids.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Charge Point from Station (Optional)
+                </label>
+                <select
+                  value={selectedStationCpid}
+                  onChange={(e) => setSelectedStationCpid(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={loadingStationCpids}
+                >
+                  <option value="">-- All CPIDs at this station ({stationCpids.length}) --</option>
+                  {stationCpids.map((cpidInfo, idx) => (
+                    <option key={idx} value={cpidInfo.cpid}>
+                      {cpidInfo.displayName}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  {loadingStationCpids 
+                    ? 'Loading charge points...' 
+                    : selectedStationCpid 
+                    ? `✓ Selected CPID: ${selectedStationCpid}` 
+                    : `Select a specific charge point or leave empty to download all ${stationCpids.length} CPIDs from this station`}
+                </p>
+              </div>
+            )}
+
+            {stationName && stationCpids.length === 0 && !loadingStationCpids && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                ⚠️ No charge points found for this station.
+              </div>
+            )}
+
             {/* CPID Filter Input */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -393,6 +452,8 @@ const GetLogs = () => {
                     setStationName(''); // Clear station if CPID is entered
                     setStationSearchInput('');
                     setShowStationDropdown(false);
+                    setStationCpids([]);
+                    setSelectedStationCpid('');
                   }
                 }}
                 placeholder="e.g., 100028 or ocpp_100028"
@@ -492,6 +553,8 @@ const GetLogs = () => {
                     setStationName('');
                     setStationSearchInput('');
                     setShowStationDropdown(false);
+                    setStationCpids([]);
+                    setSelectedStationCpid('');
                     setError('');
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
@@ -507,8 +570,9 @@ const GetLogs = () => {
         <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="font-semibold text-blue-900 mb-2">Instructions:</h3>
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-            <li><strong>Station Filter:</strong> Select a station name to download logs for all charge points at that location</li>
-            <li><strong>CPID Filter:</strong> Or enter a specific Charge Point ID (CPID) to download logs for just that charger</li>
+            <li><strong>Station Filter:</strong> Select a station name to see all charge points at that location</li>
+            <li><strong>Station CPID Filter:</strong> After selecting a station, you can optionally filter to specific charge point(s) within that station</li>
+            <li><strong>Manual CPID Filter:</strong> Or enter a specific Charge Point ID directly (bypasses station selection)</li>
             <li><strong>Date Range:</strong> Use quick buttons (Last 7, 15, 30, 60 days) or click the date input for custom selection</li>
             <li>Click a single date for logs from that day, or select start and end dates for a range</li>
             <li>Leave all filters empty to download all logs for the selected date range</li>
