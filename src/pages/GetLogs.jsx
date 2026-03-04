@@ -30,6 +30,10 @@ const GetLogs = () => {
   const [selectedOemCpids, setSelectedOemCpids] = useState([]); // Selected CPIDs from OEM (array)
   const [loadingOemCpids, setLoadingOemCpids] = useState(false);
   const oemDropdownRef = useRef(null); // Ref for the OEM dropdown container
+  
+  // Drag selection states
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStartDate, setDragStartDate] = useState(null);
 
   const daysInMonth = (date) => {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -348,7 +352,7 @@ const GetLogs = () => {
 
     // Add empty cells for days before the first day of the month
     for (let i = 0; i < firstDay; i++) {
-      week.push(<div key={`empty-${i}`} className="p-2"></div>);
+      week.push(<div key={`empty-${i}`} className="p-3"></div>);
     }
 
     // Add days of the month
@@ -356,31 +360,41 @@ const GetLogs = () => {
       const date = new Date(monthDate.getFullYear(), monthDate.getMonth(), day);
       const isSelected = isSameDay(date, selectedDate) || isSameDay(date, selectedEndDate);
       const inRange = selectedDate && selectedEndDate && isInRange(date, selectedDate, selectedEndDate);
+      const isToday = isSameDay(date, new Date());
 
       week.push(
         <button
           key={day}
-          onClick={() => {
+          onMouseDown={() => {
             const clickedDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), day);
-            
-            if (!selectedDate || (selectedDate && selectedEndDate)) {
-              // Start new selection
-              setSelectedDate(clickedDate);
-              setSelectedEndDate(null);
-            } else {
-              // Complete range selection
-              if (clickedDate >= selectedDate) {
-                setSelectedEndDate(clickedDate);
+            setIsDragging(true);
+            setDragStartDate(clickedDate);
+            setSelectedDate(clickedDate);
+            setSelectedEndDate(null);
+          }}
+          onMouseEnter={() => {
+            if (isDragging && dragStartDate) {
+              const hoveredDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), day);
+              if (hoveredDate >= dragStartDate) {
+                setSelectedDate(dragStartDate);
+                setSelectedEndDate(hoveredDate);
               } else {
-                setSelectedEndDate(selectedDate);
-                setSelectedDate(clickedDate);
+                setSelectedDate(hoveredDate);
+                setSelectedEndDate(dragStartDate);
               }
             }
           }}
+          onMouseUp={() => {
+            setIsDragging(false);
+          }}
           className={`
-            p-2 text-center rounded hover:bg-gray-100 transition-colors
-            ${isSelected ? 'bg-blue-500 text-white hover:bg-blue-600' : ''}
-            ${inRange && !isSelected ? 'bg-blue-100' : ''}
+            relative p-3 text-center rounded-lg transition-all duration-150
+            ${isToday && !isSelected && !inRange ? 'ring-2 ring-blue-400 font-bold' : ''}
+            ${isSelected ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg scale-105 font-semibold' : ''}
+            ${inRange && !isSelected ? 'bg-blue-100 text-blue-900 font-medium' : ''}
+            ${!isSelected && !inRange ? 'hover:bg-gray-100 hover:scale-105' : ''}
+            ${!isSelected && !inRange && !isToday ? 'text-gray-700' : ''}
+            cursor-pointer select-none
           `}
         >
           {day}
@@ -389,7 +403,7 @@ const GetLogs = () => {
 
       if (week.length === 7) {
         weeks.push(
-          <div key={`week-${weeks.length}`} className="grid grid-cols-7 gap-1">
+          <div key={`week-${weeks.length}`} className="grid grid-cols-7 gap-2">
             {week}
           </div>
         );
@@ -399,7 +413,7 @@ const GetLogs = () => {
 
     if (week.length > 0) {
       weeks.push(
-        <div key={`week-${weeks.length}`} className="grid grid-cols-7 gap-1">
+        <div key={`week-${weeks.length}`} className="grid grid-cols-7 gap-2">
           {week}
         </div>
       );
@@ -865,8 +879,9 @@ const GetLogs = () => {
             <li><strong>OEM Filter:</strong> Or select an OEM manufacturer to see all charge points from that brand across all stations</li>
             <li><strong>OEM CPID Checkboxes:</strong> After selecting an OEM, check specific charge point(s) you want to download (or leave all unchecked for all CPIDs from that OEM)</li>
             <li><strong>Manual CPID Filter:</strong> Or enter a specific Charge Point ID directly (bypasses station and OEM selection)</li>
-            <li><strong>Date Range:</strong> Use quick buttons (Last 7, 15, 30, 60 days) or click the date input for custom selection</li>
-            <li>Click a single date for logs from that day, or select start and end dates for a range</li>
+            <li><strong>Date Range:</strong> Use quick buttons (Last 7, 15, 30, 60 days) or click the date input to open calendar</li>
+            <li><strong>Drag to Select:</strong> In the calendar, click and drag across dates to select a range (e.g., drag from April 2 to April 10)</li>
+            <li>After selecting dates, click "Done" to close the calendar and then click "Fetch Data" to download logs</li>
             <li>Leave all filters empty to download all logs for the selected date range</li>
             <li>Logs are downloaded as a zip file containing CSV files in format: ocpp_[CPID]_[DATE].csv</li>
           </ul>
@@ -875,51 +890,60 @@ const GetLogs = () => {
 
       {/* Calendar Modal */}
       {showCalendar && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-3xl w-full mx-4">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Please choose a date or date range to view data
-              </h3>
+        <div 
+          className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50"
+          onMouseUp={() => setIsDragging(false)}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-4xl w-full mx-4 border border-gray-200">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-1">
+                  Select Date Range
+                </h3>
+                <p className="text-sm text-gray-500">Click and drag to select multiple days</p>
+              </div>
               <button
-                onClick={() => setShowCalendar(false)}
-                className="text-gray-400 hover:text-gray-600"
+                onClick={() => {
+                  setShowCalendar(false);
+                  setIsDragging(false);
+                }}
+                className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full p-2 transition-colors"
               >
                 <X className="h-6 w-6" />
               </button>
             </div>
 
             {/* Calendar Navigation */}
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-8 bg-gray-50 rounded-xl p-4">
               <button
                 onClick={handlePrevMonth}
-                className="p-2 hover:bg-gray-100 rounded"
+                className="p-3 hover:bg-white rounded-lg transition-colors shadow-sm hover:shadow text-gray-700 font-semibold"
               >
-                ←
+                ← Previous
               </button>
-              <div className="flex gap-8">
-                <h4 className="text-lg font-semibold">
+              <div className="flex gap-12">
+                <h4 className="text-lg font-bold text-gray-800">
                   {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                 </h4>
-                <h4 className="text-lg font-semibold">
+                <h4 className="text-lg font-bold text-gray-800">
                   {new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                 </h4>
               </div>
               <button
                 onClick={handleNextMonth}
-                className="p-2 hover:bg-gray-100 rounded"
+                className="p-3 hover:bg-white rounded-lg transition-colors shadow-sm hover:shadow text-gray-700 font-semibold"
               >
-                →
+                Next →
               </button>
             </div>
 
             {/* Two Month View */}
-            <div className="grid grid-cols-2 gap-8">
+            <div className="grid grid-cols-2 gap-10">
               {/* First Month */}
               <div>
-                <div className="grid grid-cols-7 gap-1 mb-2">
+                <div className="grid grid-cols-7 gap-2 mb-3">
                   {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day) => (
-                    <div key={day} className="text-center text-sm font-semibold text-gray-600 p-2">
+                    <div key={day} className="text-center text-xs font-bold text-gray-500 uppercase tracking-wider p-2">
                       {day}
                     </div>
                   ))}
@@ -929,9 +953,9 @@ const GetLogs = () => {
 
               {/* Second Month */}
               <div>
-                <div className="grid grid-cols-7 gap-1 mb-2">
+                <div className="grid grid-cols-7 gap-2 mb-3">
                   {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day) => (
-                    <div key={`next-${day}`} className="text-center text-sm font-semibold text-gray-600 p-2">
+                    <div key={`next-${day}`} className="text-center text-xs font-bold text-gray-500 uppercase tracking-wider p-2">
                       {day}
                     </div>
                   ))}
@@ -941,29 +965,49 @@ const GetLogs = () => {
             </div>
 
             {/* Modal Actions */}
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setShowCalendar(false)}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setShowCalendar(false);
-                  handleFetchData();
-                }}
-                disabled={!selectedDate || isLoading}
-                className={`
-                  px-6 py-2 rounded-lg font-medium
-                  ${!selectedDate || isLoading
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                  }
-                `}
-              >
-                Fetch Data
-              </button>
+            <div className="flex justify-between items-center mt-8 pt-6 border-t border-gray-200">
+              <div className="text-sm">
+                {selectedDate && selectedEndDate ? (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 font-medium">
+                      {formatDate(selectedDate)}
+                    </span>
+                    <span className="text-gray-400">→</span>
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 font-medium">
+                      {formatDate(selectedEndDate)}
+                    </span>
+                  </div>
+                ) : selectedDate ? (
+                  <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 font-medium">
+                    {formatDate(selectedDate)}
+                  </span>
+                ) : (
+                  <span className="text-gray-400 italic">No date selected - Click and drag to select</span>
+                )}
+              </div>
+              <div className="flex gap-3">
+                {selectedDate && (
+                  <button
+                    onClick={() => {
+                      setSelectedDate(null);
+                      setSelectedEndDate(null);
+                      setIsDragging(false);
+                    }}
+                    className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-semibold shadow-md hover:shadow-lg transition-all"
+                  >
+                    Clear Selection
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setShowCalendar(false);
+                    setIsDragging(false);
+                  }}
+                  className="px-8 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 font-semibold shadow-lg hover:shadow-xl transition-all"
+                >
+                  Done
+                </button>
+              </div>
             </div>
           </div>
         </div>
