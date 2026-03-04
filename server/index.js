@@ -64,7 +64,7 @@ function getDateRange(startDate, endDate) {
 
 // API endpoint to download logs
 app.post('/api/logs/download', async (req, res) => {
-  const { startDate, endDate, cpid, cpids, stationName, oemName } = req.body;
+  const { startDate, endDate, cpid, cpids, stationName, oemName, downloadFormat } = req.body;
 
   if (!startDate) {
     return res.status(400).json({ error: 'Start date is required' });
@@ -72,6 +72,7 @@ app.post('/api/logs/download', async (req, res) => {
 
   try {
     const dates = getDateRange(startDate, endDate || startDate);
+    const format = downloadFormat || 'separate'; // Default to 'separate' if not provided
     
     // Normalize CPID - remove 'ocpp_' prefix if present and trim
     let normalizedCpids = [];
@@ -150,62 +151,169 @@ app.post('/api/logs/download', async (req, res) => {
 
     let hasFiles = false;
 
-    // Process each date
-    for (const date of dates) {
-      const logPath = path.join(BASE_LOG_PATH, date.year, date.month, date.day);
-      
-      console.log(`Processing: ${logPath}`);
+    // If merged format, collect all files grouped by CPID first
+    if (format === 'merged') {
+      const cpidFilesMap = new Map(); // Map<cpid, Array<{filePath, filename, dateStr}>>
 
-      // Check if directory exists
-      if (!fs.existsSync(logPath)) {
-        console.log(`Directory not found: ${logPath}`);
-        continue;
-      }
+      // Collect all matching files grouped by CPID
+      for (const date of dates) {
+        const logPath = path.join(BASE_LOG_PATH, date.year, date.month, date.day);
+        
+        console.log(`Scanning for merge: ${logPath}`);
 
-      // Read directory
-      const files = fs.readdirSync(logPath);
-      
-      if (files.length === 0) {
-        console.log(`No files in: ${logPath}`);
-        continue;
-      }
+        if (!fs.existsSync(logPath)) {
+          console.log(`Directory not found: ${logPath}`);
+          continue;
+        }
 
-      // Add each file to the archive (with CPID filtering if applicable)
-      for (const filename of files) {
-        // Filter by CPIDs if provided
-        if (normalizedCpids.length > 0) {
-          // Match pattern: ocpp_{cpid}_{date}.csv for any of the CPIDs
-          const matchesAnyCpid = normalizedCpids.some(cpidToMatch => {
-            const cpidPattern = new RegExp(`^ocpp_${cpidToMatch}_.*\\.csv$`, 'i');
-            return cpidPattern.test(filename);
-          });
+        const files = fs.readdirSync(logPath);
+        
+        for (const filename of files) {
+          // Filter by CPIDs if provided
+          if (normalizedCpids.length > 0) {
+            const matchesAnyCpid = normalizedCpids.some(cpidToMatch => {
+              const cpidPattern = new RegExp(`^ocpp_${cpidToMatch}_.*\\.csv$`, 'i');
+              return cpidPattern.test(filename);
+            });
+            
+            if (!matchesAnyCpid) {
+              continue;
+            }
+          }
           
-          if (!matchesAnyCpid) {
-            continue; // Skip files that don't match any CPID
+          const filePath = path.join(logPath, filename);
+          const stats = fs.statSync(filePath);
+          
+          if (stats.isFile() && filename.match(/^ocpp_(\d+)_.*\.csv$/i)) {
+            // Extract CPID from filename
+            const match = filename.match(/^ocpp_(\d+)_.*\.csv$/i);
+            const cpidFromFile = match[1];
+            
+            if (!cpidFilesMap.has(cpidFromFile)) {
+              cpidFilesMap.set(cpidFromFile, []);
+            }
+            
+            cpidFilesMap.get(cpidFromFile).push({
+              filePath,
+              filename,
+              dateStr: `${date.year}-${date.month}-${date.day}`
+            });
+            
+            hasFiles = true;
+          }
+        }
+      }
+
+      if (!hasFiles) {
+        archive.abort();
+        const errorMsg = stationName
+          ? `No log files found for station "${stationName}" in the selected date(s)`
+          : normalizedCpids.length > 0
+          ? `No log files found for CPID ${normalizedCpids[0]} in the selected date(s)`
+          : 'No log files found for the selected date(s)';
+        return res.status(404).json({ error: errorMsg });
+      }
+
+      // Merge files for each CPID
+      console.log(`Merging files for ${cpidFilesMap.size} CPIDs`);
+      
+      for (const [cpidValue, fileInfos] of cpidFilesMap.entries()) {
+        // Sort files by date to ensure chronological order
+        fileInfos.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+        
+        console.log(`Merging ${fileInfos.length} files for CPID ${cpidValue}`);
+        
+        let mergedContent = '';
+        let isFirstFile = true;
+        
+        for (const fileInfo of fileInfos) {
+          const content = fs.readFileSync(fileInfo.filePath, 'utf-8');
+          const lines = content.split('\n');
+          
+          if (isFirstFile) {
+            // Include headers for the first file
+            mergedContent = content;
+            isFirstFile = false;
+          } else {
+            // Skip the header line (first line) and append the rest
+            if (lines.length > 1) {
+              const dataLines = lines.slice(1).join('\n');
+              if (dataLines.trim()) {
+                mergedContent += '\n' + dataLines.trimEnd();
+              }
+            }
           }
         }
         
-        const filePath = path.join(logPath, filename);
-        const stats = fs.statSync(filePath);
+        // Create merged filename
+        const startDateStr = fileInfos[0].dateStr.replace(/-/g, '');
+        const endDateStr = fileInfos[fileInfos.length - 1].dateStr.replace(/-/g, '');
+        const mergedFilename = `ocpp_${cpidValue}_${startDateStr}_to_${endDateStr}.csv`;
         
-        if (stats.isFile()) {
-          hasFiles = true;
-          // Add files directly to root of ZIP (no nested folders)
-          console.log(`Adding file: ${filename}`);
+        console.log(`Adding merged file: ${mergedFilename}`);
+        
+        // Add merged content to archive
+        archive.append(mergedContent, { name: mergedFilename });
+      }
+
+    } else {
+      // Separate files format (original behavior)
+      for (const date of dates) {
+        const logPath = path.join(BASE_LOG_PATH, date.year, date.month, date.day);
+        
+        console.log(`Processing: ${logPath}`);
+
+        // Check if directory exists
+        if (!fs.existsSync(logPath)) {
+          console.log(`Directory not found: ${logPath}`);
+          continue;
+        }
+
+        // Read directory
+        const files = fs.readdirSync(logPath);
+        
+        if (files.length === 0) {
+          console.log(`No files in: ${logPath}`);
+          continue;
+        }
+
+        // Add each file to the archive (with CPID filtering if applicable)
+        for (const filename of files) {
+          // Filter by CPIDs if provided
+          if (normalizedCpids.length > 0) {
+            // Match pattern: ocpp_{cpid}_{date}.csv for any of the CPIDs
+            const matchesAnyCpid = normalizedCpids.some(cpidToMatch => {
+              const cpidPattern = new RegExp(`^ocpp_${cpidToMatch}_.*\\.csv$`, 'i');
+              return cpidPattern.test(filename);
+            });
+            
+            if (!matchesAnyCpid) {
+              continue; // Skip files that don't match any CPID
+            }
+          }
           
-          archive.file(filePath, { name: filename });
+          const filePath = path.join(logPath, filename);
+          const stats = fs.statSync(filePath);
+          
+          if (stats.isFile()) {
+            hasFiles = true;
+            // Add files directly to root of ZIP (no nested folders)
+            console.log(`Adding file: ${filename}`);
+            
+            archive.file(filePath, { name: filename });
+          }
         }
       }
-    }
 
-    if (!hasFiles) {
-      archive.abort();
-      const errorMsg = stationName
-        ? `No log files found for station "${stationName}" in the selected date(s)`
-        : normalizedCpids.length > 0
-        ? `No log files found for CPID ${normalizedCpids[0]} in the selected date(s)`
-        : 'No log files found for the selected date(s)';
-      return res.status(404).json({ error: errorMsg });
+      if (!hasFiles) {
+        archive.abort();
+        const errorMsg = stationName
+          ? `No log files found for station "${stationName}" in the selected date(s)`
+          : normalizedCpids.length > 0
+          ? `No log files found for CPID ${normalizedCpids[0]} in the selected date(s)`
+          : 'No log files found for the selected date(s)';
+        return res.status(404).json({ error: errorMsg });
+      }
     }
 
     // Finalize the archive

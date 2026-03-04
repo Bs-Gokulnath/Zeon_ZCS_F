@@ -34,6 +34,9 @@ const GetLogs = () => {
   // Drag selection states
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartDate, setDragStartDate] = useState(null);
+  
+  // Download format option
+  const [downloadFormat, setDownloadFormat] = useState('separate'); // 'separate' or 'merged'
 
   const daysInMonth = (date) => {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -286,7 +289,8 @@ const GetLogs = () => {
           cpid: cpid.trim() || null, // Manual CPID entry
           cpids: (selectedStationCpids.length > 0 ? selectedStationCpids : (selectedOemCpids.length > 0 ? selectedOemCpids : null)), // Array of selected CPIDs (from station or OEM)
           stationName: (selectedStationCpids.length === 0 && selectedOemCpids.length === 0 && !cpid.trim() && stationName && !oemName) ? stationName : null, // Send station name only if no CPIDs selected and no OEM
-          oemName: (selectedOemCpids.length === 0 && selectedStationCpids.length === 0 && !cpid.trim() && !stationName && oemName) ? oemName : null // Send OEM name only if no CPIDs selected and no station
+          oemName: (selectedOemCpids.length === 0 && selectedStationCpids.length === 0 && !cpid.trim() && !stationName && oemName) ? oemName : null, // Send OEM name only if no CPIDs selected and no station
+          downloadFormat: downloadFormat // 'separate' or 'merged'
         }),
       });
 
@@ -819,6 +823,41 @@ const GetLogs = () => {
               </div>
             </div>
 
+            {/* Download Format Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Download Format
+              </label>
+              <div className="flex gap-4">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    value="separate"
+                    checked={downloadFormat === 'separate'}
+                    onChange={(e) => setDownloadFormat(e.target.value)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  <span className="ml-2 text-sm text-gray-700">
+                    <span className="font-medium">Separate Files</span>
+                    <span className="block text-xs text-gray-500">One CSV file per CPID per date</span>
+                  </span>
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    value="merged"
+                    checked={downloadFormat === 'merged'}
+                    onChange={(e) => setDownloadFormat(e.target.value)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  <span className="ml-2 text-sm text-gray-700">
+                    <span className="font-medium">Merged by CPID</span>
+                    <span className="block text-xs text-gray-500">One CSV file per CPID (all dates combined)</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
             {/* Error Message */}
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
@@ -881,9 +920,10 @@ const GetLogs = () => {
             <li><strong>Manual CPID Filter:</strong> Or enter a specific Charge Point ID directly (bypasses station and OEM selection)</li>
             <li><strong>Date Range:</strong> Use quick buttons (Last 7, 15, 30, 60 days) or click the date input to open calendar</li>
             <li><strong>Drag to Select:</strong> In the calendar, click and drag across dates to select a range (e.g., drag from April 2 to April 10)</li>
+            <li><strong>Download Format:</strong> Choose between "Separate Files" (one CSV per CPID per date) or "Merged by CPID" (one CSV per CPID with all dates combined chronologically)</li>
             <li>After selecting dates, click "Done" to close the calendar and then click "Fetch Data" to download logs</li>
             <li>Leave all filters empty to download all logs for the selected date range</li>
-            <li>Logs are downloaded as a zip file containing CSV files in format: ocpp_[CPID]_[DATE].csv</li>
+            <li>Logs are downloaded as a zip file. File format: ocpp_[CPID]_[DATE].csv (separate) or ocpp_[CPID]_[STARTDATE]_to_[ENDDATE].csv (merged)</li>
           </ul>
         </div>
       </main>
